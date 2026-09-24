@@ -33,11 +33,9 @@ class DhakaFlix : AnimeHttpLegacySource() {
         val relPath: String get() = url.encodedPath
     }
 
-    private fun String.natKey() =
-        lowercase().replace(Regex("\\d+")) { it.value.padStart(6, '0') }
+    private fun String.natKey() = lowercase().replace(Regex("\\d+")) { it.value.padStart(6, '0') }
 
-    private fun parseEntries(response: Response): List<Entry> =
-        parseEntries(response.asJsoup(), response.request.url)
+    private fun parseEntries(response: Response): List<Entry> = parseEntries(response.asJsoup(), response.request.url)
 
     // Returns only direct children of the current folder (skips parent/sort links)
     private fun parseEntries(doc: Document, current: HttpUrl): List<Entry> {
@@ -60,8 +58,7 @@ class DhakaFlix : AnimeHttpLegacySource() {
         url = e.relPath
     }
 
-    private fun subFolders(folder: Entry): List<Entry> =
-        client.newCall(GET(folder.url, headers)).execute().use { parseEntries(it) }.filter { it.isDir }
+    private fun subFolders(folder: Entry): List<Entry> = client.newCall(GET(folder.url, headers)).execute().use { parseEntries(it) }.filter { it.isDir }
 
     // The page number / search query travels in the URL fragment (never sent to the server)
     private fun rootRequest(tag: String): Request {
@@ -92,8 +89,7 @@ class DhakaFlix : AnimeHttpLegacySource() {
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request =
-        rootRequest("q:$query")
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = rootRequest("q:$query")
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
