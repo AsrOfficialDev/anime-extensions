@@ -27,7 +27,9 @@ import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.nodes.Document
 
-class DhakaFlix : AnimeHttpLegacySource(), ConfigurableAnimeSource {
+class DhakaFlix :
+    AnimeHttpLegacySource(),
+    ConfigurableAnimeSource {
 
     override val name = "DhakaFlix Anime"
     override val baseUrl = "http://172.16.50.9"
