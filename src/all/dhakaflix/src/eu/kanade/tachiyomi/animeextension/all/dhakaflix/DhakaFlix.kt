@@ -1,5 +1,8 @@
 package eu.kanade.tachiyomi.animeextension.all.dhakaflix
 
+import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -8,14 +11,23 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.AnimeHttpLegacySource
+import keiyoushi.utils.getPreferencesLazy
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import org.json.JSONObject
 import org.jsoup.nodes.Document
 
-class DhakaFlix : AnimeHttpLegacySource() {
+class DhakaFlix : AnimeHttpLegacySource(), ConfigurableAnimeSource {
 
     override val name = "DhakaFlix Anime"
     override val baseUrl = "http://172.16.50.9"
@@ -25,6 +37,9 @@ class DhakaFlix : AnimeHttpLegacySource() {
     private val rootPath = "/DHAKA-FLIX-9/Anime%20%26%20Cartoon%20TV%20Series/"
     private val videoExt = setOf("mkv", "mp4", "avi", "webm", "m4v", "mov", "ts", "flv")
     private val maxDepth = 3 // how many folder levels deep to look for episodes
+    private val pageSize = 30
+
+    private val preferences by getPreferencesLazy()
 
     // ---------- Directory listing helpers ----------
 
@@ -49,49 +64,106 @@ class DhakaFlix : AnimeHttpLegacySource() {
         }.distinctBy { it.relPath }
     }
 
+    private fun fetchEntries(url: HttpUrl): List<Entry> = client.newCall(GET(url, headers)).execute().use { parseEntries(it) }
+
     // ---------- Anime list ----------
-    // The root holds range folders (0-9, A-F, G-M, N-S, T-Z).
-    // Each range folder = one page, and each folder inside it = one anime.
+    // The root holds range folders (0-9, A-F, G-M, N-S, T-Z). Each folder inside those is one anime.
+    // We flatten every range into one sorted list and paginate that ourselves.
+
+    private fun allAnime(): List<Entry> {
+        val ranges = fetchEntries((baseUrl + rootPath).toHttpUrl()).filter { it.isDir }
+        return ranges.flatMap { r -> fetchEntries(r.url).filter { it.isDir } }
+            .distinctBy { it.relPath }
+            .sortedBy { it.name.natKey() }
+    }
 
     private fun toAnime(e: Entry) = SAnime.create().apply {
         title = e.name
         url = e.relPath
     }
 
-    private fun subFolders(folder: Entry): List<Entry> = client.newCall(GET(folder.url, headers)).execute().use { parseEntries(it) }.filter { it.isDir }
-
-    // The page number / search query travels in the URL fragment (never sent to the server)
-    private fun rootRequest(tag: String): Request {
+    private fun taggedRequest(tag: String): Request {
         val url = (baseUrl + rootPath).toHttpUrl().newBuilder().fragment(tag).build()
         return GET(url, headers)
     }
 
-    override fun popularAnimeRequest(page: Int): Request = rootRequest("p:$page")
-
-    override fun popularAnimeParse(response: Response): AnimesPage {
-        val tag = response.request.url.fragment.orEmpty()
-        val ranges = parseEntries(response).filter { it.isDir }
-
+    private fun paginate(all: List<Entry>, tag: String): AnimesPage {
         if (tag.startsWith("q:")) {
             val q = tag.removePrefix("q:")
-            val found = ranges.flatMap { subFolders(it) }
-                .filter { it.name.contains(q, ignoreCase = true) }
-                .map { toAnime(it) }
-            return AnimesPage(found, false)
+            return AnimesPage(attachCovers(all.filter { it.name.contains(q, ignoreCase = true) }), false)
         }
-
         val page = tag.removePrefix("p:").toIntOrNull() ?: 1
-        val range = ranges.getOrNull(page - 1) ?: return AnimesPage(emptyList(), false)
-        return AnimesPage(subFolders(range).map { toAnime(it) }, page < ranges.size)
+        val from = (page - 1) * pageSize
+        if (from >= all.size) return AnimesPage(emptyList(), false)
+        val slice = all.subList(from, minOf(from + pageSize, all.size))
+        return AnimesPage(attachCovers(slice), from + pageSize < all.size)
     }
+
+    private fun listParse(response: Response): AnimesPage = paginate(allAnime(), response.request.url.fragment.orEmpty())
+
+    override fun popularAnimeRequest(page: Int): Request = taggedRequest("p:$page")
+
+    override fun popularAnimeParse(response: Response): AnimesPage = listParse(response)
 
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
 
-    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
+    override fun latestUpdatesParse(response: Response): AnimesPage = listParse(response)
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = rootRequest("q:$query")
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = taggedRequest("q:$query")
 
-    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
+    override fun searchAnimeParse(response: Response): AnimesPage = listParse(response)
+
+    // ---------- Covers (AniList lookup, cached on-device) ----------
+
+    private val coverCache by lazy {
+        val raw = preferences.getString(PREF_CACHE_KEY, null)
+        if (raw.isNullOrBlank()) JSONObject() else runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
+    }
+
+    private fun cleanTitle(title: String) = title.replace(Regex("""\s*[\[(].*?[\])]\s*"""), " ").trim()
+
+    private fun fetchCover(rawTitle: String): String? {
+        val title = cleanTitle(rawTitle)
+        synchronized(coverCache) { coverCache.optString(title, "") }.takeIf { it.isNotEmpty() }?.let { return it }
+
+        return runCatching {
+            val query = "query(\$s: String) { Media(search: \$s, type: ANIME) { coverImage { large } } }"
+            val body = JSONObject().apply {
+                put("query", query)
+                put("variables", JSONObject().put("s", title))
+            }.toString().toRequestBody("application/json".toMediaType())
+
+            val req = Request.Builder().url("https://graphql.anilist.co").post(body).build()
+            client.newCall(req).execute().use { resp ->
+                val json = JSONObject(resp.body?.string().orEmpty())
+                val url = json.optJSONObject("data")
+                    ?.optJSONObject("Media")
+                    ?.optJSONObject("coverImage")
+                    ?.optString("large")
+                    ?.takeIf { it.isNotEmpty() }
+                if (url != null) {
+                    synchronized(coverCache) {
+                        coverCache.put(title, url)
+                        preferences.edit().putString(PREF_CACHE_KEY, coverCache.toString()).apply()
+                    }
+                }
+                url
+            }
+        }.getOrNull()
+    }
+
+    private fun attachCovers(entries: List<Entry>): List<SAnime> {
+        val animes = entries.map { toAnime(it) }
+        if (!preferences.getBoolean(PREF_COVERS_KEY, true)) return animes
+
+        val covers = runBlocking(Dispatchers.IO) {
+            val gate = Semaphore(6)
+            entries.map { e -> async { e.relPath to gate.withPermit { fetchCover(e.name) } } }.map { it.await() }
+        }.toMap()
+
+        animes.forEachIndexed { i, a -> a.thumbnail_url = covers[entries[i].relPath] }
+        return animes
+    }
 
     // ---------- Details ----------
 
@@ -141,5 +213,21 @@ class DhakaFlix : AnimeHttpLegacySource() {
         val url = response.request.url.toString()
         response.close()
         return listOf(Video(url, "Direct", url))
+    }
+
+    // ---------- Preferences ----------
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_COVERS_KEY
+            title = "Fetch anime covers online"
+            summary = "Looks up a poster for each anime from AniList by title. Turn off for faster, text-only browsing."
+            setDefaultValue(true)
+        }.also(screen::addPreference)
+    }
+
+    companion object {
+        private const val PREF_COVERS_KEY = "pref_fetch_covers"
+        private const val PREF_CACHE_KEY = "pref_cover_cache"
     }
 }
