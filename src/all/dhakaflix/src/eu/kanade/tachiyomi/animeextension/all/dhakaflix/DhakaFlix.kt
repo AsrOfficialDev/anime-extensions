@@ -65,7 +65,7 @@ class DhakaFlix :
             val a = tr.selectFirst("td.fb-n a") ?: return@mapNotNull null
             val link = a.absUrl("href").toHttpUrlOrNull() ?: return@mapNotNull null
             if (link.host != current.host || link.encodedPath == current.encodedPath) return@mapNotNull null
-            
+
             val seg = link.pathSegments.filter { it.isNotEmpty() }
             if (seg.size <= cur.size || seg.take(cur.size) != cur) return@mapNotNull null
 
@@ -133,10 +133,10 @@ class DhakaFlix :
                 }
             }
         """.trimIndent()
-        
+
         val body = """{"query": ${Json.encodeToString(kotlinx.serialization.builtins.serializer(), query)}}"""
             .toRequestBody("application/json".toMediaType())
-            
+
         return try {
             val res = client.newCall(POST("https://graphql.anilist.co", headers, body)).execute()
             val json = Json.parseToJsonElement(res.body.string()).jsonObject
