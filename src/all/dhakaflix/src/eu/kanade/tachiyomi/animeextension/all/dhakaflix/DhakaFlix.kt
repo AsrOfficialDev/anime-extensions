@@ -121,20 +121,18 @@ class DhakaFlix :
 
     // ---------- AniList Covers ----------
 
-    private fun fetchAniListCover(title: String): String {
-        return try {
-            val query = "query(\$s: String) { Media(search: \$s, type: ANIME) { coverImage { extraLarge } } }"
-            val body = JSONObject().apply {
-                put("query", query)
-                put("variables", JSONObject().put("s", title))
-            }.toString().toRequestBody("application/json".toMediaType())
+    private fun fetchAniListCover(title: String): String = try {
+        val query = "query(\$s: String) { Media(search: \$s, type: ANIME) { coverImage { extraLarge } } }"
+        val body = JSONObject().apply {
+            put("query", query)
+            put("variables", JSONObject().put("s", title))
+        }.toString().toRequestBody("application/json".toMediaType())
 
-            val res = client.newCall(POST("https://graphql.anilist.co", headers, body)).execute()
-            val json = JSONObject(res.body.string())
-            json.optJSONObject("data")?.optJSONObject("Media")?.optJSONObject("coverImage")?.optString("extraLarge") ?: ""
-        } catch (e: Exception) {
-            ""
-        }
+        val res = client.newCall(POST("https://graphql.anilist.co", headers, body)).execute()
+        val json = JSONObject(res.body.string())
+        json.optJSONObject("data")?.optJSONObject("Media")?.optJSONObject("coverImage")?.optString("extraLarge") ?: ""
+    } catch (e: Exception) {
+        ""
     }
 
     // ---------- Details & Episodes ----------
