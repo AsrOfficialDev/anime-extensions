@@ -14,9 +14,6 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.AnimeHttpLegacySource
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -24,6 +21,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import org.json.JSONObject
 import org.jsoup.nodes.Document
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -124,23 +122,16 @@ class DhakaFlix :
     // ---------- AniList Covers ----------
 
     private fun fetchAniListCover(title: String): String {
-        val query = """
-            query {
-                Media(search: "$title", type: ANIME) {
-                    coverImage {
-                        extraLarge
-                    }
-                }
-            }
-        """.trimIndent()
-
-        val body = """{"query": ${Json.encodeToString(kotlinx.serialization.builtins.serializer(), query)}}"""
-            .toRequestBody("application/json".toMediaType())
-
         return try {
+            val query = "query(\$s: String) { Media(search: \$s, type: ANIME) { coverImage { extraLarge } } }"
+            val body = JSONObject().apply {
+                put("query", query)
+                put("variables", JSONObject().put("s", title))
+            }.toString().toRequestBody("application/json".toMediaType())
+
             val res = client.newCall(POST("https://graphql.anilist.co", headers, body)).execute()
-            val json = Json.parseToJsonElement(res.body.string()).jsonObject
-            json["data"]?.jsonObject?.get("Media")?.jsonObject?.get("coverImage")?.jsonObject?.get("extraLarge")?.jsonPrimitive?.content ?: ""
+            val json = JSONObject(res.body.string())
+            json.optJSONObject("data")?.optJSONObject("Media")?.optJSONObject("coverImage")?.optString("extraLarge") ?: ""
         } catch (e: Exception) {
             ""
         }
