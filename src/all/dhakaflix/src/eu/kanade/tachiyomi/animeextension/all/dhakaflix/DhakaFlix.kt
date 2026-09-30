@@ -17,12 +17,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import okhttp3.FormBody
+import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.nodes.Document
@@ -99,8 +99,11 @@ class DhakaFlix :
             .distinctBy { it.relPath }
     }
 
+    // Strips characters that some clients mis-handle when saving titles to their own storage
+    private fun sanitize(s: String) = s.replace("\\", "").replace(Regex("\\s+"), " ").trim()
+
     private fun toAnime(e: Entry) = SAnime.create().apply {
-        title = e.name
+        title = sanitize(e.name)
         url = e.relPath
     }
 
@@ -156,12 +159,14 @@ class DhakaFlix :
 
         return runCatching {
             val query = "query(\$s: String) { Media(search: \$s, type: ANIME) { coverImage { large } } }"
-            val body = JSONObject().apply {
-                put("query", query)
-                put("variables", JSONObject().put("s", title))
-            }.toString().toRequestBody("application/json".toMediaType())
+            val variables = JSONObject().put("s", title).toString()
+            val body = FormBody.Builder()
+                .add("query", query)
+                .add("variables", variables)
+                .build()
+            val reqHeaders = Headers.Builder().add("Referer", "https://anilist.co").build()
 
-            val req = Request.Builder().url("https://graphql.anilist.co").post(body).build()
+            val req = Request.Builder().url("https://graphql.anilist.co").headers(reqHeaders).post(body).build()
             client.newCall(req).execute().use { resp ->
                 val json = JSONObject(resp.body?.string().orEmpty())
                 val url = json.optJSONObject("data")
@@ -197,7 +202,7 @@ class DhakaFlix :
 
     override fun animeDetailsParse(response: Response): SAnime = SAnime.create().apply {
         val segs = response.request.url.pathSegments.filter { it.isNotEmpty() }
-        title = segs.last()
+        title = sanitize(segs.last())
         description = "Path: " + segs.joinToString(" / ")
         status = SAnime.UNKNOWN
     }
@@ -228,7 +233,7 @@ class DhakaFlix :
         return files.mapIndexed { i, (prefix, e) ->
             SEpisode.create().apply {
                 url = e.relPath
-                name = prefix + e.name.substringBeforeLast('.')
+                name = sanitize(prefix + e.name.substringBeforeLast('.'))
                 episode_number = (i + 1).toFloat()
             }
         }.reversed()
