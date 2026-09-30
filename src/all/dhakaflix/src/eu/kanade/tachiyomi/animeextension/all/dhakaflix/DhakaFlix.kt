@@ -17,8 +17,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import okhttp3.FormBody
-import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -26,6 +24,7 @@ import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.nodes.Document
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -99,8 +98,18 @@ class DhakaFlix :
             .distinctBy { it.relPath }
     }
 
-    // Strips characters that some clients mis-handle when saving titles to their own storage
-    private fun sanitize(s: String) = s.replace("\\", "").replace(Regex("\\s+"), " ").trim()
+    // Strips/normalizes characters that some clients mis-handle when saving titles to their
+    // own storage: accented letters -> plain letters, curly quotes/dashes -> plain ASCII ones.
+    private fun sanitize(s: String): String {
+        val plain = Normalizer.normalize(s, Normalizer.Form.NFKD).replace(Regex("\\p{M}"), "")
+        return plain
+            .replace("\\", "")
+            .replace(Regex("[\u2010-\u2015]"), "-")
+            .replace(Regex("[\u2018\u2019]"), "'")
+            .replace(Regex("[\u201C\u201D]"), "\"")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
 
     private fun toAnime(e: Entry) = SAnime.create().apply {
         title = sanitize(e.name)
@@ -144,44 +153,33 @@ class DhakaFlix :
 
     override fun searchAnimeParse(response: Response): AnimesPage = listParse(response)
 
-    // ---------- Covers (AniList lookup, cached on-device) ----------
+    // ---------- Covers (each anime folder already has its own poster image) ----------
+
+    private val imageExt = setOf("jpg", "jpeg", "png", "webp")
 
     private val coverCache by lazy {
         val raw = preferences.getString(PREF_CACHE_KEY, null)
         if (raw.isNullOrBlank()) JSONObject() else runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
     }
 
-    private fun cleanTitle(title: String) = title.replace(Regex("""\s*[\[(].*?[\])]\s*"""), " ").trim()
-
-    private fun fetchCover(rawTitle: String): String? {
-        val title = cleanTitle(rawTitle)
-        synchronized(coverCache) { coverCache.optString(title, "") }.takeIf { it.isNotEmpty() }?.let { return it }
+    private fun fetchCover(anime: Entry): String? {
+        synchronized(coverCache) { coverCache.optString(anime.relPath, "") }.takeIf { it.isNotEmpty() }?.let { return it }
 
         return runCatching {
-            val query = "query(\$s: String) { Media(search: \$s, type: ANIME) { coverImage { large } } }"
-            val variables = JSONObject().put("s", title).toString()
-            val body = FormBody.Builder()
-                .add("query", query)
-                .add("variables", variables)
-                .build()
-            val reqHeaders = Headers.Builder().add("Referer", "https://anilist.co").build()
+            val images = fetchEntries(anime.url)
+                .filter { !it.isDir && it.name.substringAfterLast('.', "").lowercase() in imageExt }
+            val pick = images.firstOrNull {
+                it.name.contains("cover", true) || it.name.contains("poster", true) || it.name.contains("folder", true)
+            } ?: images.minByOrNull { it.name.natKey() }
 
-            val req = Request.Builder().url("https://graphql.anilist.co").headers(reqHeaders).post(body).build()
-            client.newCall(req).execute().use { resp ->
-                val json = JSONObject(resp.body?.string().orEmpty())
-                val url = json.optJSONObject("data")
-                    ?.optJSONObject("Media")
-                    ?.optJSONObject("coverImage")
-                    ?.optString("large")
-                    ?.takeIf { it.isNotEmpty() }
-                if (url != null) {
-                    synchronized(coverCache) {
-                        coverCache.put(title, url)
-                        preferences.edit().putString(PREF_CACHE_KEY, coverCache.toString()).apply()
-                    }
+            val url = pick?.url?.toString()
+            if (url != null) {
+                synchronized(coverCache) {
+                    coverCache.put(anime.relPath, url)
+                    preferences.edit().putString(PREF_CACHE_KEY, coverCache.toString()).apply()
                 }
-                url
             }
+            url
         }.getOrNull()
     }
 
@@ -191,7 +189,7 @@ class DhakaFlix :
 
         val covers = runBlocking(Dispatchers.IO) {
             val gate = Semaphore(6)
-            entries.map { e -> async { e.relPath to gate.withPermit { fetchCover(e.name) } } }.map { it.await() }
+            entries.map { e -> async { e.relPath to gate.withPermit { fetchCover(e) } } }.map { it.await() }
         }.toMap()
 
         animes.forEachIndexed { i, a -> a.thumbnail_url = covers[entries[i].relPath] }
@@ -253,8 +251,8 @@ class DhakaFlix :
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         SwitchPreferenceCompat(screen.context).apply {
             key = PREF_COVERS_KEY
-            title = "Fetch anime covers online"
-            summary = "Looks up a poster for each anime from AniList by title. Turn off for faster, text-only browsing."
+            title = "Fetch anime covers"
+            summary = "Uses the cover image already inside each anime's folder. Turn off for faster, text-only browsing."
             setDefaultValue(true)
         }.also(screen::addPreference)
     }
