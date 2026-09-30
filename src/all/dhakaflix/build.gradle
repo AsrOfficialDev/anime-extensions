@@ -1,7 +1,7 @@
 ext {
     extName = 'DhakaFlix Anime'
     extClass = '.DhakaFlix'
-    extVersionCode = 3
+    extVersionCode = 5
 }
 
 apply plugin: "kei.plugins.extension.legacy"
