@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.AnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import kotlinx.coroutines.Dispatchers
@@ -28,13 +29,12 @@ import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class DhakaFlix :
+@Source
+abstract class DhakaFlix :
     AnimeHttpLegacySource(),
     ConfigurableAnimeSource {
 
-    override val name = "DhakaFlix Anime"
     override val baseUrl = "http://172.16.50.10"
-    override val lang = "all"
     override val supportsLatest = true
 
     private val rootPath = "/DHAKA-FLIX-10/Anime%20%26%20Cartoon%20TV%20Series/"
