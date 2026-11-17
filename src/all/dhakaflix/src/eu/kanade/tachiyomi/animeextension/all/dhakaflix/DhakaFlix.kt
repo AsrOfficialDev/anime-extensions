@@ -111,6 +111,20 @@ class DhakaFlix :
             .trim()
     }
 
+    private val techCutoff = Regex(
+        """\b(1080p|720p|480p|2160p|4k|x264|x265|hevc|bd|bluray|web-?dl|hdtv|dvdrip|(multi|dual)[ _-]?audio|10bit|8bit|dd\d\.\d|esub|uncut|remux)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    // Keeps only the show/episode identifier: drops the release-group tag and every
+    // quality/codec tag after it, and never includes the season folder name.
+    private fun cleanEpisodeName(raw: String): String {
+        val noGroupTag = raw.replace(Regex("""^\s*\[[^\]]*\]\s*"""), "")
+        val cutIndex = techCutoff.find(noGroupTag)?.range?.first
+        val core = if (cutIndex != null) noGroupTag.substring(0, cutIndex) else noGroupTag
+        return sanitize(core.replace(Regex("[\\[\\]]"), "").trimEnd(' ', '-', '_', '.', '(', '{'))
+    }
+
     private fun toAnime(e: Entry) = SAnime.create().apply {
         title = sanitize(e.name)
         url = e.relPath
@@ -228,10 +242,10 @@ class DhakaFlix :
     override fun episodeListParse(response: Response): List<SEpisode> {
         val files = mutableListOf<Pair<String, Entry>>()
         collect(parseEntries(response), "", 1, files)
-        return files.mapIndexed { i, (prefix, e) ->
+        return files.mapIndexed { i, (_, e) ->
             SEpisode.create().apply {
                 url = e.relPath
-                name = sanitize(prefix + e.name.substringBeforeLast('.'))
+                name = cleanEpisodeName(e.name.substringBeforeLast('.'))
                 episode_number = (i + 1).toFloat()
             }
         }.reversed()
