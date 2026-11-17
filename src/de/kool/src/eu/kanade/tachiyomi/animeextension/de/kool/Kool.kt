@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.POST
+import keiyoushi.annotation.Source
 import keiyoushi.utils.AnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.toJsonRequestBody
@@ -31,15 +32,10 @@ import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 
-class Kool :
+@Source
+abstract class Kool :
     AnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-
-    override val name = "Kool"
-
-    override val baseUrl = "https://www.kool.to"
-
-    override val lang = "de"
 
     override val supportsLatest = false
 
@@ -389,7 +385,7 @@ class Kool :
 
                 item.jsonObject["url"]!!.jsonPrimitive.content.contains("https://clipboard") && hosterSelection?.contains("clip") == true -> {
                     val videoUrl = item.jsonObject["url"]!!.jsonPrimitive.content
-                    val video = Video(videoUrl, "Clipboard", videoUrl)
+                    val video = Video(videoUrl = videoUrl, videoTitle = "Clipboard")
                     videoList.add(video)
                 }
 
@@ -416,7 +412,7 @@ class Kool :
 
                 response.request.url.toString().contains("kool-cluster/mediahubmx-resolve.json") -> {
                     val videoUrl = item.jsonObject["url"]!!.jsonPrimitive.content
-                    val video = Video(videoUrl, "TV", videoUrl)
+                    val video = Video(videoUrl = videoUrl, videoTitle = "TV")
                     videoList.add(video)
                 }
             }

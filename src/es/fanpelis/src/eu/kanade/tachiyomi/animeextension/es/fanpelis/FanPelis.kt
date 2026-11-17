@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
@@ -28,15 +29,10 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.injectLazy
 
-class FanPelis :
+@Source
+abstract class FanPelis :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-
-    override val name = "FanPelis"
-
-    override val baseUrl = "https://fanpelis.la"
-
-    override val lang = "es"
 
     override val supportsLatest = false
 
@@ -272,7 +268,7 @@ class FanPelis :
                             "es-MX,es-419;q=0.9,es;q=0.8,en;q=0.7,zh-TW;q=0.6,zh-CN;q=0.5,zh;q=0.4",
                         )
                         .build()
-                    return Video(videoUrl, "Streamlare:$type", videoUrl, headers = headers)
+                    return Video(videoUrl = videoUrl, videoTitle = "Streamlare:$type", headers = headers)
                 }
             }
             return null

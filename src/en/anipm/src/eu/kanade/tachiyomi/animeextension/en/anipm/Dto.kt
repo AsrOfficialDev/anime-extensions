@@ -9,9 +9,12 @@ import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import org.jsoup.parser.Parser
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -31,7 +34,7 @@ class CatalogResponseDto(
 
 @Serializable
 class TitleItemDto(
-    val id: Long? = null,
+    val id: Long = 0L,
     val source: String? = null,
     val routeId: String? = null,
     val title: String? = null,
@@ -49,26 +52,30 @@ class TitleItemDto(
     val anilistId: String? = null,
     val status: String? = null,
     val type: String? = null,
+    @Serializable(with = FlexibleStringListSerializer::class)
     val genres: List<String> = emptyList(),
+    @Serializable(with = FlexibleStringListSerializer::class)
     val studios: List<String> = emptyList(),
     val episodeCount: Int? = null,
     val subCount: Int? = null,
     val dubCount: Int? = null,
     val synopsis: String? = null,
     val season: String? = null,
+    @Serializable(with = FlexibleStringListSerializer::class)
     val tags: List<String>? = null,
+    @Serializable(with = FlexibleStringListSerializer::class)
     val providerTitles: List<String>? = null,
 ) {
-    /** Stable handle: settlar numeric id (catalog always provides it). */
-    fun toHandle(): String? = id?.takeIf { it > 0 }?.let { "set-$it" }
+    /** Stable handle: settlar numeric id or ani id (catalog always provides it). */
+    fun toHandle(): String? = stableMainHandle(source, id, anilistId, routeId)
 
     fun toSAnime(baseUrl: String): SAnime? {
-        val t = title?.takeIf(String::isNotBlank) ?: return null
+        val t = title?.takeIf(String::isNotBlank) ?: native?.takeIf(String::isNotBlank) ?: return null
         val handle = toHandle() ?: return null
         return SAnime.create().apply {
-            url = routeId ?: handle
+            url = handle
             title = t
-            thumbnail_url = absoluteCover(baseUrl, poster)
+            thumbnail_url = stableCoverUrl(baseUrl, source, anilistId, routeId, malId, poster)
             status = parseStatus(this@TitleItemDto.status)
             genre = buildList {
                 addAll(genres.filter(String::isNotBlank).sortedBy { it })
@@ -86,7 +93,7 @@ class TitleItemDto(
 class SeriesResponseDto(
     val id: Long,
     val source: String? = null,
-    val title: String = "",
+    val title: String,
     val native: String? = null,
     val poster: String? = null,
     val banner: String? = null,
@@ -96,7 +103,9 @@ class SeriesResponseDto(
     @Serializable(with = FlexibleStringSerializer::class)
     val duration: String? = null,
     val type: String? = null,
+    @Serializable(with = FlexibleStringListSerializer::class)
     val genres: List<String> = emptyList(),
+    @Serializable(with = FlexibleStringListSerializer::class)
     val studios: List<String> = emptyList(),
     val episodeCount: Int? = null,
     val subCount: Int? = null,
@@ -108,7 +117,9 @@ class SeriesResponseDto(
     val anilistId: String? = null,
     val status: String? = null,
     val season: String? = null,
+    @Serializable(with = FlexibleStringListSerializer::class)
     val tags: List<String>? = null,
+    @Serializable(with = FlexibleStringListSerializer::class)
     val providerTitles: List<String>? = null,
     val episodes: List<SeriesEpisodeDto> = emptyList(),
     val relations: List<RelationDto> = emptyList(),
@@ -125,9 +136,10 @@ class SeriesResponseDto(
     }
 
     fun toSAnime(baseUrl: String): SAnime = SAnime.create().apply {
-        url = routeId ?: "set-$id"
+        url = stableMainHandle(source, id, anilistId, routeId) ?: routeId?.takeIf(String::isNotBlank) ?: "anime/$id"
         title = this@SeriesResponseDto.title
-        thumbnail_url = absoluteCover(baseUrl, poster)
+        thumbnail_url = stableCoverUrl(baseUrl, source, anilistId, routeId, malId, poster)
+        background_url = absoluteCover(baseUrl, banner)
         status = parseStatus(this@SeriesResponseDto.status)
         genre = buildList {
             addAll(genres.filter(String::isNotBlank).sortedBy { it })
@@ -184,11 +196,6 @@ class SeriesResponseDto(
                 append("**Trackers**: ${trackers.joinToString(" • ")}")
                 append("\n")
             }
-            banner?.let {
-                append("\n![Banner](")
-                append(absoluteCover(baseUrl, it) ?: return@let)
-                append(")")
-            }
         }.takeIf(String::isNotBlank)
     }
 }
@@ -201,34 +208,50 @@ class RecommendResponseDto(val items: List<RecommendItemDto> = emptyList())
 
 @Serializable
 class RecommendItemDto(
-    val id: Long? = null,
+    val id: Long = 0L,
     val source: String? = null,
     val titleId: String? = null,
-    val title: String? = null,
+    val title: String,
     val native: String? = null,
     val poster: String? = null,
     val year: Int? = null,
     val score: Double? = null,
     val status: String? = null,
+    @Serializable(with = FlexibleStringListSerializer::class)
     val genres: List<String> = emptyList(),
+    @Serializable(with = FlexibleStringListSerializer::class)
     val studios: List<String> = emptyList(),
+    @Serializable(with = FlexibleStringListSerializer::class)
+    val tags: List<String>? = null,
     val synopsis: String? = null,
     val routeId: String? = null,
 ) {
-    /** anime:6275 → set-6275 · ani:151384 → ani-151384 */
-    fun toHandle(): String? = when {
-        titleId?.startsWith("anime:") == true -> "set-" + titleId.removePrefix("anime:")
-        titleId?.startsWith("ani:") == true -> "ani-" + titleId.removePrefix("ani:")
-        else -> null
+    fun toHandle(): String? {
+        val aniIdRaw = when {
+            titleId?.startsWith("ani:") == true -> titleId.removePrefix("ani:")
+            else -> null
+        }
+        val aniId = stableAnilistId(source, aniIdRaw, routeId)
+        return aniId?.let { "ani-$it" }
+            ?: id.takeIf { it in 1..<syntheticAniListBase }?.let { "set-$it" }
+            ?: routeId?.takeIf(String::isNotBlank)
+    }
+
+    fun toThumbnailUrl(baseUrl: String): String? {
+        val aniIdRaw = when {
+            titleId?.startsWith("ani:") == true -> titleId.removePrefix("ani:")
+            else -> null
+        }
+        return stableCoverUrl(baseUrl, source, aniIdRaw, routeId, null, poster)
     }
 
     fun toSAnime(baseUrl: String): SAnime? {
-        val t = title?.takeIf(String::isNotBlank) ?: return null
+        val t = title.takeIf(String::isNotBlank) ?: return null
         val handle = toHandle() ?: return null
         return SAnime.create().apply {
-            url = routeId ?: handle
+            url = handle
             title = t
-            thumbnail_url = absoluteCover(baseUrl, poster)
+            thumbnail_url = toThumbnailUrl(baseUrl)
         }
     }
 }
@@ -267,17 +290,25 @@ class FillerRangesDto(
 
 @Serializable
 class RelationDto(
-    val id: Long,
+    val id: Long = 0L,
     @Serializable(with = FlexibleStringSerializer::class)
     val anilistId: String? = null,
     val source: String? = null,
     val relation: String? = null,
-    val title: String? = null,
+    val title: String,
     val type: String? = null,
     val year: Int? = null,
     val poster: String? = null,
+    val routeId: String? = null,
 ) {
-    fun toHandle(): String? = id.takeIf { it > 0 }?.let { "set-$it" }
+    fun toHandle(): String? {
+        val aniId = stableAnilistId(source, anilistId, routeId)
+        return aniId?.let { "ani-$it" }
+            ?: id.takeIf { it in 1..<syntheticAniListBase }?.let { "set-$it" }
+            ?: routeId?.takeIf(String::isNotBlank)
+    }
+
+    fun toThumbnailUrl(baseUrl: String): String? = stableCoverUrl(baseUrl, source, anilistId, routeId, null, poster)
 }
 
 @Serializable
@@ -367,23 +398,6 @@ private val airDateFormat = SimpleDateFormat("MMM d, yyyy", Locale.US).apply {
     timeZone = TimeZone.getTimeZone("UTC")
 }
 
-@Serializable
-class MetaResponseDto(val meta: Map<String, MetaEntryDto> = emptyMap())
-
-@Serializable
-class MetaEntryDto(val routeId: String? = null)
-
-@Serializable
-class FacetsDto(
-    val genres: List<FacetDto> = emptyList(),
-    val tags: List<FacetDto> = emptyList(),
-    val studios: List<FacetDto> = emptyList(),
-    val updatedAt: Long = 0L,
-)
-
-@Serializable
-class FacetDto(val name: String, val count: Int = 0)
-
 private val BR_REGEX = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
 private val INLINE_TAG_REGEX = Regex("</?(?:i|b|em|strong)>", RegexOption.IGNORE_CASE)
 
@@ -394,6 +408,74 @@ private val INLINE_TAG_REGEX = Regex("</?(?:i|b|em|strong)>", RegexOption.IGNORE
 internal fun absoluteCover(baseUrl: String, path: String?): String? {
     val p = path?.takeIf(String::isNotBlank) ?: return null
     return if (p.startsWith("/")) baseUrl + p else p
+}
+
+/**
+ * Stable AniList id usable as a lookup key: prefers the parsed anilistId,
+ * falls back to the numeric tail of ani-family routeIds. Synthetic ids
+ * (800000000+) are site-internal composites and resolve nowhere.
+ */
+private fun stableAnilistId(source: String?, anilistId: String?, routeId: String?): Long? {
+    anilistId?.trim()?.takeIf(String::isNotBlank)?.toLongOrNull()
+        ?.takeIf { it in 1..<syntheticAniListBase }
+        ?.let { return it }
+
+    if (source != "anilist") return null
+
+    val route = routeId?.takeIf(String::isNotBlank) ?: return null
+    val tailStr = route.substringAfterLast('-')
+    val tail = tailStr.toLongOrNull()?.takeIf { it in 1..<syntheticAniListBase } ?: return null
+    val lowerRoute = route.lowercase()
+    if (tail < 1000 && (lowerRoute.contains("season") || lowerRoute.contains("part") || lowerRoute.contains("cour") || lowerRoute.contains("ova") || lowerRoute.contains("special"))) {
+        return null
+    }
+    return tail
+}
+
+/**
+ * Stable series handle for catalog/series payloads. Only ids that every API
+ * endpoint resolves on are encoded ("ani-<anilistId>" / "set-<numeric id>"):
+ * routeIds embed title slugs that the site regenerates at any time, so they
+ * are consumed for extraction only and never persisted in SAnime.url.
+ */
+internal fun stableMainHandle(source: String?, id: Long, anilistId: String?, routeId: String?): String? = when {
+    source == "anilist" -> stableAnilistId(source, anilistId, routeId)?.let { "ani-$it" } ?: routeId?.takeIf(String::isNotBlank)
+    id in 1..<syntheticAniListBase -> "set-$id"
+    else -> routeId?.takeIf(String::isNotBlank)
+}
+
+/**
+ * Episode preview still. The art form is id-parameterized only and keeps
+ * serving across slug rotations; ani mirrors do not return a thumbnail at
+ * all, while canonical responses carry it in the art form. When no AniList
+ * id is available, falls back to the raw thumbnail path.
+ */
+internal fun episodePreviewUrl(baseUrl: String, source: String?, anilistId: String?, routeId: String?, epNumber: String, thumbnail: String?): String? {
+    val aid = stableAnilistId(source, anilistId, routeId)
+    if (aid != null) {
+        return "$baseUrl/api/anime/art/still/$aid/$epNumber"
+    }
+    return thumbnail?.takeIf(String::isNotBlank)?.let { absoluteCover(baseUrl, it) }
+}
+
+/**
+ * Cover URL that depends only on ids. Poster paths arrive with a rotating
+ * "?key=" token that dies whenever the site regenerates slugs, while the
+ * id-parameterized form (seen in playback-bootstrap responses) keeps
+ * serving without any session. Falls back to the raw poster path when no
+ * usable id is available.
+ */
+internal fun stableCoverUrl(baseUrl: String, source: String?, anilistId: String?, routeId: String?, malId: Long?, poster: String?): String? {
+    val aid = stableAnilistId(source, anilistId, routeId) ?: return absoluteCover(baseUrl, poster)
+    return buildString {
+        append(baseUrl)
+        append("/api/anime/cover?anilistId=")
+        append(aid)
+        malId?.takeIf { it > 0 }?.let { mal ->
+            append("&malId=")
+            append(mal)
+        }
+    }
 }
 
 /**
@@ -423,6 +505,33 @@ object FlexibleStringSerializer : KSerializer<String?> {
     }
 }
 
+/** Accepts List of Strings OR List of Objects with name/tag/title/label/genre/studio; anything else → emptyList(). */
+object FlexibleStringListSerializer : KSerializer<List<String>> {
+    override val descriptor = PrimitiveSerialDescriptor("FlexibleStringList", PrimitiveKind.STRING)
+
+    override fun deserialize(decoder: Decoder): List<String> {
+        val jsonDecoder = decoder as? JsonDecoder ?: return emptyList()
+        val element = runCatching { jsonDecoder.decodeJsonElement() }.getOrNull()
+        if (element !is JsonArray) return emptyList()
+
+        return element.mapNotNull { item ->
+            when (item) {
+                is JsonPrimitive -> item.contentOrNull?.takeIf(String::isNotBlank)
+                is JsonObject -> {
+                    (item["name"] ?: item["tag"] ?: item["title"] ?: item["label"] ?: item["genre"] ?: item["studio"])
+                        ?.let { if (it is JsonPrimitive) it.contentOrNull else null }
+                        ?.takeIf(String::isNotBlank)
+                }
+                else -> null
+            }
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: List<String>) {
+        encoder.encodeString(value.joinToString(","))
+    }
+}
+
 /** Accepts number or numeric string (12815 or "12815"); anything else → null. */
 object FlexibleLongSerializer : KSerializer<Long?> {
     override val descriptor = PrimitiveSerialDescriptor("FlexibleLong?", PrimitiveKind.LONG)
@@ -437,3 +546,14 @@ object FlexibleLongSerializer : KSerializer<Long?> {
         if (value == null) encoder.encodeNull() else encoder.encodeLong(value)
     }
 }
+
+@Serializable
+class FacetsDto(
+    val genres: List<FacetDto> = emptyList(),
+    val tags: List<FacetDto> = emptyList(),
+    val studios: List<FacetDto> = emptyList(),
+    val updatedAt: Long = 0L,
+)
+
+@Serializable
+class FacetDto(val name: String, val count: Int = 0)

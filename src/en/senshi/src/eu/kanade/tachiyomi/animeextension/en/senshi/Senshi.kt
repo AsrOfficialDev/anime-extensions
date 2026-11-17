@@ -2,9 +2,9 @@ package eu.kanade.tachiyomi.animeextension.en.senshi
 
 import android.content.SharedPreferences
 import android.util.LruCache
-import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.playlistutils.PlaylistUtils
+import aniyomi.lib.youtubeextractor.YoutubeExtractor
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -18,8 +18,11 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
+import eu.kanade.tachiyomi.network.await
+import keiyoushi.annotation.Source
 import keiyoushi.network.rateLimit
 import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.get
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
@@ -31,9 +34,9 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okhttp3.CacheControl
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
 import org.nanohttpd.protocols.http.NanoHTTPD
@@ -42,20 +45,14 @@ import java.util.Locale
 import java.util.TimeZone
 import kotlin.math.roundToInt
 
-class Senshi :
+@Source
+abstract class Senshi :
     AnimeHttpSource(),
     ConfigurableAnimeSource {
-
-    override val name = "Senshi"
-
-    override val lang = "en"
 
     override val supportsLatest = true
 
     private val preferences: SharedPreferences by getPreferencesLazy()
-    override val baseUrl: String
-        get() = preferences.getString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT) ?: PREF_DOMAIN_DEFAULT
-
     private val titleLanguage: String
         get() = preferences.getString(PREF_TITLE_LANG_KEY, PREF_TITLE_LANG_DEFAULT) ?: PREF_TITLE_LANG_DEFAULT
 
@@ -87,17 +84,7 @@ class Senshi :
 
     private val playlistUtils by lazy { PlaylistUtils(network.client, headers) }
 
-    private val anicdnRefererInterceptor = Interceptor { chain ->
-        val request = chain.request()
-        if (request.url.host == IMAGE_CDN_HOST) {
-            chain.proceed(request.newBuilder().header("Referer", "$baseUrl/").build())
-        } else {
-            chain.proceed(request)
-        }
-    }
-
     override val client = network.client.newBuilder()
-        .addInterceptor(anicdnRefererInterceptor)
         .rateLimit(5) { it.host == baseUrl.toHttpUrl().host }
         .build()
 
@@ -106,7 +93,7 @@ class Senshi :
     }
 
     // ============================== Anime metadata ==============================
-    private data class AnimeMeta(val malId: Int, val anilistId: Int?, val subCount: Int, val dubCount: Int)
+    private data class AnimeMeta(val malId: Int, val anilistId: Int?, val subCount: Int, val dubCount: Int, val trailer: String?)
 
     private val animeMetaCache by lazy { LruCache<String, AnimeMeta>(64) }
     private val animeMetaMutex = Mutex()
@@ -120,7 +107,7 @@ class Senshi :
             try {
                 client.get("$baseUrl/anime/$publicId", apiHeaders()).use { res ->
                     val dto = res.parseAs<SenshiAnimeDto>()
-                    AnimeMeta(dto.id, dto.anilistId, dto.subCount, dto.dubCount)
+                    AnimeMeta(dto.id, dto.anilistId, dto.subCount, dto.dubCount, dto.trailer)
                         .also { animeMetaCache.put(publicId, it) }
                 }
             } catch (_: Exception) {
@@ -141,26 +128,26 @@ class Senshi :
         searchTerm: String = "",
         types: List<String> = emptyList(),
         genres: List<String> = emptyList(),
+        excludedGenres: List<String> = emptyList(),
         status: List<String> = emptyList(),
         seasons: List<String> = emptyList(),
-        year: String = "",
+        year: String? = null,
         languages: List<String> = emptyList(),
     ): Request {
         browsePage = page
         val payload = buildJsonObject {
-            put("searchTerm", searchTerm)
-            put("types", JsonArray(types.map(::JsonPrimitive)))
-            put("genres", JsonArray(genres.map(::JsonPrimitive)))
-            put("status", JsonArray(status.map(::JsonPrimitive)))
-            put("seasons", JsonArray(seasons.map(::JsonPrimitive)))
-            put("year", year)
-            put("studios", JsonArray(emptyList()))
-            put("producers", JsonArray(emptyList()))
-            put("languages", JsonArray(languages.map(::JsonPrimitive)))
             put("page", page)
             put("limit", PAGE_LIMIT)
             put("sortBy", sortBy)
             put("languagePreference", serverLanguage)
+            if (searchTerm.isNotBlank()) put("searchTerm", searchTerm)
+            if (types.isNotEmpty()) put("types", JsonArray(types.map(::JsonPrimitive)))
+            if (genres.isNotEmpty()) put("genres", JsonArray(genres.map(::JsonPrimitive)))
+            if (excludedGenres.isNotEmpty()) put("excludedGenres", JsonArray(excludedGenres.map(::JsonPrimitive)))
+            if (status.isNotEmpty()) put("status", JsonArray(status.map(::JsonPrimitive)))
+            if (seasons.isNotEmpty()) put("seasons", JsonArray(seasons.map(::JsonPrimitive)))
+            if (year != null) put("year", year)
+            if (languages.isNotEmpty()) put("languages", JsonArray(languages.map(::JsonPrimitive)))
         }
         return POST("$baseUrl/anime/filter", apiHeaders(), payload.toString().toJsonBody())
     }
@@ -187,9 +174,10 @@ class Senshi :
         var sortBy = "score_desc"
         var types: List<String> = emptyList()
         var genres: List<String> = emptyList()
+        var excludedGenres: List<String> = emptyList()
         var status: List<String> = emptyList()
         var seasons: List<String> = emptyList()
-        var year = ""
+        var year: String? = null
         var languages: List<String> = emptyList()
 
         filters.forEach { filter ->
@@ -199,22 +187,22 @@ class Senshi :
                 is Filters.StatusFilter -> status = filter.getSelectedValues()
                 is Filters.LanguageFilter -> languages = filter.getSelectedValues()
                 is Filters.SeasonFilter -> seasons = filter.getSelectedValues()
-                is Filters.YearFilter -> year = filter.getValue() ?: ""
+                is Filters.YearFilter -> year = filter.getValue()
                 is Filters.GenreFilter -> {
                     genres = filter.getIncluded()
-                    // Site shows genre exclusion, but it just ignores the genre (STATE_IGNORE behavior).
+                    excludedGenres = filter.getExcluded()
                 }
                 else -> {}
             }
         }
         if (searchTerm.isBlank()) searchTerm = ""
 
-        return filterRequest(page, sortBy, searchTerm, types, genres, status, seasons, year, languages)
+        return filterRequest(page, sortBy, searchTerm, types, genres, excludedGenres, status, seasons, year, languages)
     }
 
     override fun searchAnimeParse(response: Response) = filterParse(response)
 
-    // ============================== Anime Details ==============================
+    // =========================== Anime Details ============================
     override fun getAnimeUrl(anime: SAnime): String = "$baseUrl/watch/${anime.url}/1"
 
     override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/anime/${anime.url}", apiHeaders())
@@ -224,7 +212,7 @@ class Senshi :
 
         animeMetaCache.put(
             dto.publicId,
-            AnimeMeta(dto.id, dto.anilistId, dto.subCount, dto.dubCount),
+            AnimeMeta(dto.id, dto.anilistId, dto.subCount, dto.dubCount, dto.trailer),
         )
 
         val anime = dto.toSAnime(titleLanguage, baseUrl) ?: throw Exception("Could not parse anime details")
@@ -277,14 +265,6 @@ class Senshi :
             dto.tvdbId?.takeIf { it > 0 }?.let { add("[TVDB](https://thetvdb.com/series/$it)") }
         }
         append("**Trackers**: ${trackers.joinToString(" • ")}")
-        append("\n")
-
-        dto.trailer?.takeIf(String::isNotBlank)?.let { trailer ->
-            trailer.substringAfter("/embed/", "").takeIf(String::isNotBlank)?.let { ytId ->
-                append("**Trailer**: [YouTube](https://www.youtube.com/watch?v=$ytId)")
-                append("\n")
-            }
-        }
     }
 
     // ======================== Related / Recommended =======================
@@ -319,7 +299,6 @@ class Senshi :
     override fun seasonListParse(response: Response) = throw UnsupportedOperationException()
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val proxy = getProxyServer()
         val meta = animeMetaCache.get(anime.url) ?: fetchAnimeMeta(anime.url)
             ?: throw Exception("Could not load anime info. Refresh in WebView.")
 
@@ -330,12 +309,11 @@ class Senshi :
             throw Exception("Could not find any episodes. Check if there are any in WebView.")
         }
 
-        return episodes.map { ep ->
+        val episodeList = episodes.map { ep ->
             SEpisode.create().apply {
                 episode_number = ep.epId.toFloat()
                 url = "${anime.url}/${ep.epId}"
                 preview_url = ep.epThumbnail?.takeIf(String::isNotBlank)
-                    ?.let { proxy.proxyUrl(it) }
                 val epNumStr = ep.epId.toString()
                 name = buildString {
                     append(
@@ -364,9 +342,25 @@ class Senshi :
                 skipTimesCache.put(url, SkipTimes(ep.introStart, ep.introEnd, ep.outroStart, ep.outroEnd))
             }
         }.sortedByDescending { it.episode_number }
+
+        val trailerEpisode = meta.trailer?.let { getTrailerUrl(it) }?.let { trailerUrl ->
+            SEpisode.create().apply {
+                episode_number = 0f
+                url = trailerUrl
+                name = "Trailer"
+                date_upload = 0L
+            }
+        }
+
+        return if (trailerEpisode != null) {
+            episodeList + trailerEpisode
+        } else {
+            episodeList
+        }
     }
 
     override fun getEpisodeUrl(episode: SEpisode): String {
+        if (episode.episode_number == 0f) return episode.url
         val (publicId, epNum) = episode.url.split("/")
         return "$baseUrl/watch/$publicId/$epNum"
     }
@@ -375,6 +369,10 @@ class Senshi :
 
     // ============================== Hosters ===============================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        if (episode.episode_number == 0f) {
+            return listOf(Hoster(hosterUrl = episode.url, hosterName = "YouTube"))
+        }
+
         val (publicId, epNum) = episode.url.split("/")
         val meta = animeMetaCache.get(publicId) ?: fetchAnimeMeta(publicId) ?: return emptyList()
 
@@ -404,7 +402,8 @@ class Senshi :
                         fmt(resolve(epSkip?.introStart, embed.introStartMs)) + "|||" +
                         fmt(resolve(epSkip?.introEnd, embed.introEndMs)) + "|||" +
                         fmt(resolve(epSkip?.outroStart, embed.outroStartMs)) + "|||" +
-                        fmt(resolve(epSkip?.outroEnd, embed.outroEndMs)),
+                        fmt(resolve(epSkip?.outroEnd, embed.outroEndMs)) +
+                        "|||${meta.malId}|||$epNum",
                 )
             }
     }
@@ -415,21 +414,20 @@ class Senshi :
 
     // ========================== Video Extraction ==========================
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        if (hoster.hosterName == "YouTube") {
+            return youtubeExtractor.videosFromUrl(hoster.hosterUrl, preferredCodecs = listOf("AV1", "VP9", "H.264"))
+                .sortedByDescending { it.videoTitle.contains(preferredQuality) }
+                .map { if (it.videoTitle.contains(preferredQuality)) it.copy(preferred = true) else it }
+        }
         if (!hoster.internalData.startsWith("vidcloud::")) return emptyList()
 
         val parts = hoster.internalData.removePrefix("vidcloud::").split("|||")
-        val sourceId = parts.getOrNull(0)?.takeIf(String::isNotBlank) ?: return emptyList()
+        val videoId = parts.getOrNull(0)?.takeIf(String::isNotBlank)?.toLongOrNull()
+            ?: return emptyList()
 
-        val entries = try {
-            client.get("https://s.vidcloud.se/_v1/sources?id=$sourceId", videoHeaders)
-                .use { it.parseAs<List<VidcloudEntryDto>>() }
-        } catch (_: Exception) {
-            return emptyList()
-        }
-
+        val entries = vidcloudResolver.resolve(videoId)
         val audioTag = parts.getOrNull(1).orEmpty()
-        // Rendition patterns as observed in decrypted masters: audio/0_ja, audio/1_en
-        val audioRendition = if (audioTag == "Dub") "1_en" else "0_ja"
+        val isDub = audioTag.equals("Dub", ignoreCase = true)
 
         val proxy = getProxyServer()
 
@@ -447,12 +445,20 @@ class Senshi :
         }
 
         return entries.flatMap { entry ->
-            val src = entry.source?.src?.takeUnless(String::isBlank) ?: return@flatMap emptyList()
+            // A "both" source carries both audio renditions and is split by language
+            // in the proxy; separate "sub"/"dub" sources are picked by label, and a
+            // source labeled for the other audio type is never used.
+            val wanted = if (isDub) "dub" else "sub"
+            val unwanted = if (isDub) "sub" else "dub"
+            val source = entry.sources.firstOrNull { it.label.equals(wanted, ignoreCase = true) }
+                ?: entry.sources.firstOrNull { !it.label.equals(unwanted, ignoreCase = true) }
+                ?: return@flatMap emptyList()
+            val audioLanguage = if (isDub) "en" else "ja"
 
-            val isDub = audioTag.equals("Dub", ignoreCase = true)
-
-            val subtitles = entry.tracks
-                .filter { !it.url.isNullOrBlank() && !it.label.equals("chapter", ignoreCase = true) }
+            val usableTracks = entry.tracks.filter {
+                !(it.url ?: it.vttUrl).isNullOrBlank() && !it.label.equals("chapter", ignoreCase = true)
+            }
+            val subtitles = usableTracks
                 // Subs live on the SHARED source (Dub & HardSub point at one Vidcloud
                 // stream), so each hoster keeps only its own set.
                 .filter { track ->
@@ -460,17 +466,14 @@ class Senshi :
                         track.url.orEmpty().contains("ai_dub")
                     if (isDub) isDubTrack else !isDubTrack
                 }
-                .ifEmpty {
-                    entry.tracks.filter { !it.url.isNullOrBlank() && !it.label.equals("chapter", ignoreCase = true) }
-                }
-                .map { Track(proxy.proxyUrl(it.url!!), it.label ?: "Unknown") }
+                .ifEmpty { usableTracks }
+                .map { Track(it.url ?: it.vttUrl!!, it.label ?: "Unknown") }
 
             playlistUtils.extractFromHls(
-                playlistUrl = proxy.proxyUrl(src) + "&audio=$audioRendition",
+                playlistUrl = proxy.proxyUrl(source.src) + "&audio=$audioLanguage",
                 referer = "$baseUrl/",
                 masterHeaders = videoHeaders,
                 videoHeaders = videoHeaders,
-                videoNameGen = { quality -> quality },
                 subtitleList = subtitles,
             )
         }
@@ -485,19 +488,34 @@ class Senshi :
             }
     }
 
-    // ========================= Proxy / Key Wiring =========================
-    private val keyStore by lazy {
-        Em3u8KeyStore(preferences, network.client, headers) { baseUrl }
+    // ========================== Proxy / Utilities =========================
+    private val youtubeExtractor by lazy { YoutubeExtractor(client, headers) }
+
+    private fun getTrailerUrl(trailer: String?): String? {
+        val t = trailer?.takeIf(String::isNotBlank) ?: return null
+        return when {
+            t.startsWith("http") -> t
+            t.length == 11 -> "https://www.youtube.com/watch?v=$t"
+            else -> null
+        }
+    }
+
+    private val vidcloudResolver by lazy {
+        VidcloudResolver({ baseUrl }, headers["User-Agent"]) {
+            // Lets the app's Cloudflare interceptor clear a challenge on the
+            // vidcloud host; the clearance cookie is shared with the WebView.
+            client.newCall(GET(VIDCLOUD_URL, videoHeaders, CacheControl.FORCE_NETWORK)).await().close()
+        }
     }
 
     @Volatile
-    private var proxyServer: Em3u8Proxy? = null
+    private var proxyServer: EM3u8Proxy? = null
 
     @Synchronized
-    private fun getProxyServer(): Em3u8Proxy {
+    private fun getProxyServer(): EM3u8Proxy {
         if (proxyServer == null || !proxyServer!!.isAlive) {
             proxyServer?.stop()
-            proxyServer = Em3u8Proxy(videoHeaders, network.client, keyStore)
+            proxyServer = EM3u8Proxy(videoHeaders, network.client)
                 .also { it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
         }
         return proxyServer!!
@@ -505,15 +523,6 @@ class Senshi :
 
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        screen.addListPreference(
-            key = PREF_DOMAIN_KEY,
-            title = "Preferred Domain",
-            entries = PREF_DOMAIN_ENTRIES,
-            entryValues = PREF_DOMAIN_VALUES,
-            default = PREF_DOMAIN_DEFAULT,
-            summary = "%s",
-        )
-
         screen.addListPreference(
             key = PREF_TITLE_LANG_KEY,
             title = "Preferred Title Language",
@@ -541,23 +550,18 @@ class Senshi :
             summary = "%s",
         )
 
-        MultiSelectListPreference(screen.context).apply {
-            key = PREF_AUDIO_EXCLUDE_KEY
-            title = "Exclude Audio Types"
-            entries = PREF_AUDIO_ENTRIES.toTypedArray()
-            entryValues = PREF_AUDIO_VALUES.toTypedArray()
-            setDefaultValue(PREF_AUDIO_EXCLUDE_DEFAULT)
-            summary = "Hide videos of the selected audio types."
-        }.also(screen::addPreference)
+        screen.addSetPreference(
+            key = PREF_AUDIO_EXCLUDE_KEY,
+            title = "Exclude Audio Types",
+            entries = PREF_AUDIO_ENTRIES,
+            entryValues = PREF_AUDIO_VALUES,
+            default = PREF_AUDIO_EXCLUDE_DEFAULT,
+            summary = "Hide videos of the selected audio types.",
+        )
     }
 
     companion object {
         private const val PAGE_LIMIT = 30
-
-        private const val PREF_DOMAIN_KEY = "preferred_domain"
-        private val PREF_DOMAIN_ENTRIES = listOf("senshi.to")
-        private val PREF_DOMAIN_VALUES = listOf("https://senshi.to")
-        private const val PREF_DOMAIN_DEFAULT = "https://senshi.to"
 
         private const val PREF_TITLE_LANG_KEY = "preferred_title_lang"
         private const val PREF_TITLE_LANG_DEFAULT = "romaji"
@@ -580,7 +584,7 @@ class Senshi :
         private val BR_REGEX = Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE)
         private val HTML_TAG_REGEX = Regex("""</?(i|b|em)>""", RegexOption.IGNORE_CASE)
 
-        private const val IMAGE_CDN_HOST = "img.anicdn.se"
+        private const val VIDCLOUD_URL = "https://s.vidcloud.se/"
 
         fun parseStatus(status: String?): Int = when (status?.trim()) {
             "Currently Airing" -> SAnime.ONGOING

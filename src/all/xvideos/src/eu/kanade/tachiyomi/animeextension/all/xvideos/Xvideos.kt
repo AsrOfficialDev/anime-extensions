@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import okhttp3.Request
@@ -17,15 +18,10 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class Xvideos :
+@Source
+abstract class Xvideos :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-
-    override val name = "Xvideos"
-
-    override val baseUrl = "https://www.xvideos.com"
-
-    override val lang = "all"
 
     override val supportsLatest = false
 
@@ -70,9 +66,9 @@ class Xvideos :
         val hlsQuality = sourcesJson.substringAfter("setVideoHLS('").substringBefore("')")
         val highQuality = sourcesJson.substringAfter("VideoUrlHigh('").substringBefore("')")
         return listOf(
-            Video(lowQuality, "Low", lowQuality),
-            Video(hlsQuality, "HLS", hlsQuality),
-            Video(highQuality, "High", highQuality),
+            Video(videoUrl = lowQuality, videoTitle = "Low"),
+            Video(videoUrl = hlsQuality, videoTitle = "HLS"),
+            Video(videoUrl = highQuality, videoTitle = "High"),
         )
     }
 

@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.es.veranime
 
 import eu.kanade.tachiyomi.animesource.model.Video
 import keiyoushi.utils.decodeHex
+import keiyoushi.utils.unescapeUnicode
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -43,10 +44,7 @@ class UnsBioExtractor(private val client: OkHttpClient, private val headers: Hea
             val strRegex = """"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`""".toRegex()
             val strings = strRegex.findAll(arrContent).map { match ->
                 val raw = match.groupValues.firstOrNull { it.isNotEmpty() }?.drop(1)?.dropLast(1) ?: ""
-                // Simple unicode unescape
-                raw.replace("""\\u([0-9a-fA-F]{4})""".toRegex()) {
-                    it.groupValues[1].toInt(16).toChar().toString()
-                }
+                raw.unescapeUnicode()
             }.toList()
 
             if (strings.size < 500) return emptyList()
@@ -179,7 +177,7 @@ class UnsBioExtractor(private val client: OkHttpClient, private val headers: Hea
                 if (ttUrl.isNotEmpty()) {
                     val vParam = "1766826492"
                     val absoluteUrl = "https://animeav1.uns.bio$ttUrl?v=$vParam"
-                    streams.add(Video(absoluteUrl, "$prefix Tiktok HLS", absoluteUrl, headers))
+                    streams.add(Video(videoUrl = absoluteUrl, videoTitle = "$prefix Tiktok HLS", headers = headers))
                 }
             }
 
@@ -187,7 +185,7 @@ class UnsBioExtractor(private val client: OkHttpClient, private val headers: Hea
             if (json.has("cf") && !json.isNull("cf")) {
                 val cfUrl = json.getString("cf")
                 if (cfUrl.isNotEmpty()) {
-                    streams.add(Video(cfUrl, "$prefix Cloudflare HLS", cfUrl, headers))
+                    streams.add(Video(videoUrl = cfUrl, videoTitle = "$prefix Cloudflare HLS", headers = headers))
                 }
             }
 
@@ -195,7 +193,7 @@ class UnsBioExtractor(private val client: OkHttpClient, private val headers: Hea
             if (json.has("source") && !json.isNull("source")) {
                 val sourceUrl = json.getString("source")
                 if (sourceUrl.isNotEmpty()) {
-                    streams.add(Video(sourceUrl, "$prefix In-House HLS", sourceUrl, headers))
+                    streams.add(Video(videoUrl = sourceUrl, videoTitle = "$prefix In-House HLS", headers = headers))
                 }
             }
 

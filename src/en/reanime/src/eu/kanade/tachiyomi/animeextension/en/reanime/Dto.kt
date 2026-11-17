@@ -91,6 +91,9 @@ class EpisodeDto(
     val aired: String? = null,
     @SerialName("is_filler") val isFiller: Boolean = false,
     @SerialName("is_recap") val isRecap: Boolean = false,
+    val subbed: Boolean = false,
+    val dubbed: Boolean = false,
+    val description: String? = null,
 )
 
 @Serializable
@@ -100,8 +103,7 @@ class ThumbnailsResponseDto(
     val episodeCount: Int? = null,
 )
 
-// ======================== Video Server DTOs ========================
-
+// =========================== Video Server DTOs ============================
 @Serializable
 class VideoResponseDto(
     val success: Boolean,
@@ -114,10 +116,10 @@ class VideoServerDto(
     val dataLink: String? = null,
     val dataType: String? = null,
     val softsub: Boolean = false,
+    val hardsub: Boolean = false,
 )
 
-// ======================== Anime Detail DTOs ========================
-
+// ============================ Anime Detail DTOs ===========================
 @Serializable
 class FuzzyDateDto(
     val year: Int? = null,
@@ -129,6 +131,12 @@ class FuzzyDateDto(
 class NextAiringEpisodeDto(
     @SerialName("airing_at") val airingAt: String? = null,
     val episode: Int? = null,
+)
+
+@Serializable
+class ExternalSeasonsDto(
+    val tmdb: Int? = null,
+    val tvdb: Int? = null,
 )
 
 @Serializable
@@ -151,6 +159,7 @@ class AnimeDetailDto(
     @SerialName("themoviedb_id") val tmdbId: Int? = null,
     @SerialName("tvdb_id") val tvdbId: Int? = null,
     @SerialName("imdb_id") val imdbId: String? = null,
+    @SerialName("external_seasons") val externalSeasons: ExternalSeasonsDto? = null,
     val title: TitleDto? = null,
     @SerialName("cover_image") private val coverImage: CoverDto? = null,
     @SerialName("banner_image") val bannerImage: String? = null,
@@ -187,6 +196,8 @@ class AnimeDetailDto(
                 c.safeExtraLarge ?: c.safeLarge ?: c.safeMedium
             }
         }
+
+        background_url = bannerImage
 
         val combinedGenres = buildList {
             genres?.filter { it.isNotBlank() }?.let { addAll(it) }
@@ -229,8 +240,7 @@ class RelationDto(
     @SerialName("season_year") val seasonYear: Int? = null,
 )
 
-// ======================== Recommendations DTOs ========================
-
+// ========================== Recommendations DTOs ==========================
 @Serializable
 class RecommendationsDto(
     val recommendations: List<RecommendationDto>,
@@ -262,8 +272,7 @@ class RecTitleDto(
     }
 }
 
-// ======================== FlixCloud Embed Data DTOs ========================
-
+// ======================== FlixCloud Embed Data DTO ========================
 @Serializable
 class FlixcloudChapterDto(
     val start: Long? = null,
@@ -298,8 +307,7 @@ class SkipTimes(
     val outroEnd: Long? = null,
 )
 
-// ======================== FlixCloud Decryption DTOs ========================
-
+// ======================== FlixCloud Decryption DTO ========================
 @Serializable
 class DecFlixCloudTokenResponseDto(
     val status: Int,

@@ -9,8 +9,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.awaitSuccess
-import keiyoushi.utils.bodyString
+import keiyoushi.annotation.Source
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.useAsJsoup
@@ -21,12 +20,8 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class AnimeQ :
-    DooPlay(
-        "pt-BR",
-        "AnimeQ",
-        "https://animeq.net",
-    ) {
+@Source
+abstract class AnimeQ : DooPlay() {
     // ============================== Popular ===============================
     override fun popularAnimeSelector() = "article.w_item_a > a, article.w_item_b > a"
 
@@ -115,7 +110,7 @@ class AnimeQ :
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
-        val players = document.select("ul#playeroptionsul li")
+        val players = document.select("div.animeq-player__source[data-animeq-source]")
         return players.parallelCatchingFlatMapBlocking(::getPlayerVideos)
     }
 
@@ -123,7 +118,13 @@ class AnimeQ :
     private val universalExtractor by lazy { UniversalExtractor(client) }
 
     private suspend fun getPlayerVideos(player: Element): List<Video> {
-        val name = player.selectFirst("span.title")?.text()
+        val sourceIndex = player.attr("data-animeq-source")
+        val name = (
+            player.selectFirst("iframe[title]")?.attr("title")
+                ?: player.closest("section.animeq-player")
+                    ?.selectFirst("button[data-animeq-switch=$sourceIndex]")
+                    ?.attr("data-source-name")
+            )
             ?.run {
                 when (this.uppercase()) {
                     "SD" -> "360p"
@@ -150,8 +151,14 @@ class AnimeQ :
                     .build()
 
                 return listOf(
-                    Video(videoUrl, name, videoUrl, videoHeaders),
+                    Video(videoUrl = videoUrl, videoTitle = name, headers = videoHeaders),
                 )
+            }
+            url.contains(".mp4", ignoreCase = true) || "stream.php" in url -> {
+                val videoHeaders = headers.newBuilder()
+                    .set("Referer", "$baseUrl/")
+                    .build()
+                listOf(Video(videoTitle = name, videoUrl = url, headers = videoHeaders))
             }
 
             else -> emptyList()
@@ -163,15 +170,19 @@ class AnimeQ :
         return videos
     }
 
-    private suspend fun getPlayerUrl(player: Element): String {
-        val type = player.attr("data-type")
-        val id = player.attr("data-post")
-        val num = player.attr("data-nume")
-        return client.newCall(GET("$baseUrl/wp-json/dooplayer/v2/$id/$type/$num"))
-            .awaitSuccess().bodyString()
-            .substringAfter("\"embed_url\":\"")
-            .substringBefore("\",")
-            .replace("\\", "")
+    private fun getPlayerUrl(player: Element): String {
+        val iframe = player.selectFirst("iframe")
+        val iframeUrl = iframe?.attr("abs:data-lazy-src")
+            ?.takeIf { it.isNotBlank() && !it.startsWith("about:") }
+            ?: iframe?.attr("abs:src")
+                ?.takeIf { it.isNotBlank() && !it.startsWith("about:") }
+
+        if (!iframeUrl.isNullOrBlank()) return iframeUrl
+
+        val source = player.selectFirst("video source[src], source[src], video[src]") ?: return ""
+        return source.attr("abs:src")
+            .ifBlank { source.attr("src") }
+            .replace("&amp;", "&")
     }
 
     // ============================== Filters ===============================

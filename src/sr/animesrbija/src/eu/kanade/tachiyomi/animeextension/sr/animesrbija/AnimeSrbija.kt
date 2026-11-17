@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.AnimeHttpLegacySource
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -24,13 +25,8 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import uy.kohesive.injekt.injectLazy
 
-class AnimeSrbija : AnimeHttpLegacySource() {
-
-    override val name = "Anime Srbija"
-
-    override val baseUrl = "https://www.animesrbija.com"
-
-    override val lang = "sr"
+@Source
+abstract class AnimeSrbija : AnimeHttpLegacySource() {
 
     override val supportsLatest = true
 
@@ -74,7 +70,7 @@ class AnimeSrbija : AnimeHttpLegacySource() {
                     FilemoonExtractor(client).videosFromUrl(trimmedUrl)
 
                 ".m3u8" in trimmedUrl ->
-                    listOf(Video(trimmedUrl, "Internal Player", trimmedUrl))
+                    listOf(Video(videoUrl = trimmedUrl, videoTitle = "Internal Player"))
 
                 else -> emptyList()
             }

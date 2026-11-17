@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.AnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
@@ -21,13 +22,8 @@ import uy.kohesive.injekt.injectLazy
 import java.net.URLEncoder
 import java.util.Calendar
 
-class Nivod : AnimeHttpLegacySource() {
-    override val baseUrl: String
-        get() = "https://www.nivod.cc"
-    override val lang: String
-        get() = "zh"
-    override val name: String
-        get() = "泥视频"
+@Source
+abstract class Nivod : AnimeHttpLegacySource() {
     override val supportsLatest: Boolean
         get() = true
 
@@ -67,7 +63,7 @@ class Nivod : AnimeHttpLegacySource() {
     override fun videoListParse(response: Response): List<Video> {
         val playInfo = response.parseAs<PlayInfo>()
         return playInfo.pdatas.map {
-            Video(it.playUrl, it.from.substring(0, 2).uppercase() + "云", it.playUrl)
+            Video(videoUrl = it.playUrl, videoTitle = it.from.substring(0, 2).uppercase() + "云")
         }
     }
 

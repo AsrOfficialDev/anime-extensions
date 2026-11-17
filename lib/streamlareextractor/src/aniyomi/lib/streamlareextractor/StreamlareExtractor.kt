@@ -7,6 +7,8 @@ import keiyoushi.utils.toJsonRequestBody
 import okhttp3.OkHttpClient
 
 class StreamlareExtractor(private val client: OkHttpClient) {
+    // Retain the legacy Video constructor for extensions targeting lib 14.
+    @Suppress("DEPRECATION")
     fun videosFromUrl(url: String, prefix: String = "", suffix: String = ""): List<Video> {
         val id = url.split("/").last()
         val playlist = client.newCall(
@@ -32,7 +34,7 @@ class StreamlareExtractor(private val client: OkHttpClient) {
                         else -> urlPart
                     }
                 }
-                Video(videoUrl, buildQuality(quality, prefix, suffix), videoUrl)
+                Video(videoUrl = videoUrl, videoTitle = buildQuality(quality, prefix, suffix))
             }
         } else {
             val separator = "\"label\":\""
@@ -42,7 +44,7 @@ class StreamlareExtractor(private val client: OkHttpClient) {
                     .replace("\\", "")
                 val response = client.newCall(POST(apiUrl)).execute()
                 val videoUrl = response.request.url.toString()
-                Video(videoUrl, buildQuality(quality, prefix, suffix), videoUrl)
+                Video(videoUrl = videoUrl, videoTitle = buildQuality(quality, prefix, suffix))
             }
         }
     }

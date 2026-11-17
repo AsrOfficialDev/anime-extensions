@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import okhttp3.Headers
@@ -20,15 +21,10 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class FilmPalast :
+@Source
+abstract class FilmPalast :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-
-    override val name = "FilmPalast"
-
-    override val baseUrl = "https://filmpalast.to"
-
-    override val lang = "de"
 
     override val supportsLatest = true
 
@@ -106,7 +102,7 @@ class FilmPalast :
                             ?: return@runCatching null
                         val videoUrl = "https:" + script.substringBefore("'") +
                             script.substringAfter("+ ('xcd").substringBefore("'")
-                        listOf(Video(videoUrl, "Streamtape", videoUrl))
+                        listOf(Video(videoUrl = videoUrl, videoTitle = "Streamtape"))
                     }.getOrNull()
                 }
 
@@ -114,7 +110,7 @@ class FilmPalast :
                     val quality = "Evoload"
                     document.selectFirst("#EvoVid_html5_api")?.attr("src")?.let { videoUrl ->
                         if (videoUrl.contains("EvoStreams")) {
-                            listOf(Video(videoUrl, quality, videoUrl))
+                            listOf(Video(videoUrl = videoUrl, videoTitle = quality))
                         } else {
                             EvoloadExtractor(client).videoFromUrl(url, quality)
                         }
@@ -128,7 +124,7 @@ class FilmPalast :
                         ?.data()
                         ?.let { jsData ->
                             val videoUrl = jsData.substringAfter("{file:\"").substringBefore("\"")
-                            listOf(Video(videoUrl, "WolfStream", videoUrl, headers = headers))
+                            listOf(Video(videoUrl = videoUrl, videoTitle = "WolfStream", headers = headers))
                         }
                 }
 

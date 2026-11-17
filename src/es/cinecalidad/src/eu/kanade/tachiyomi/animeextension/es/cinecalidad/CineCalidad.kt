@@ -27,6 +27,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.catchingFlatMapBlocking
 import keiyoushi.utils.getPreferencesLazy
@@ -38,15 +39,10 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.util.Calendar
 
-class CineCalidad :
+@Source
+abstract class CineCalidad :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-
-    override val name = "CineCalidad"
-
-    override val baseUrl = "https://www.cinecalidad.ec"
-
-    override val lang = "es"
 
     override val supportsLatest = true
 
@@ -153,7 +149,7 @@ class CineCalidad :
                         client.newCall(GET("https://www.amazon.com/drive/v1/nodes/$epId/children?resourceVersion=V2&ContentType=JSON&limit=200&sort=%5B%22kind+DESC%22%2C+%22modifiedDate+DESC%22%5D&asset=ALL&tempLink=true&shareId=$shareId"))
                             .awaitSuccess().useAsJsoup()
                     val videoUrl = amazonApi.toString().substringAfter("\"FOLDER\":").substringAfter("tempLink\":\"").substringBefore("\"")
-                    listOf(Video(videoUrl, "Amazon", videoUrl))
+                    listOf(Video(videoUrl = videoUrl, videoTitle = "Amazon"))
                 } else {
                     emptyList()
                 }

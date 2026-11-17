@@ -10,8 +10,8 @@ object Filters {
     class SortFilter : AnimeFilter.Select<String>("Sort", SORT_ENTRIES, 1) {
         fun getValue(): String = SORT_VALUES[state]
         companion object {
-            private val SORT_ENTRIES = arrayOf("For you", "Trending", "Popular", "Top rated", "Newest", "A–Z")
-            private val SORT_VALUES = arrayOf("recommended", "trending", "popular", "score", "newest", "title")
+            private val SORT_ENTRIES = arrayOf("For you", "Trending", "Popular", "Top rated", "MAL rating", "Newest", "A–Z")
+            private val SORT_VALUES = arrayOf("recommended", "trending", "popular", "score", "mal", "newest", "title")
         }
     }
 
@@ -49,6 +49,14 @@ object Filters {
         }
     }
 
+    class LanguageFilter : AnimeFilter.Select<String>("Language", AUDIO_ENTRIES, 0) {
+        fun getValue(): String? = AUDIO_VALUES[state]
+        companion object {
+            private val AUDIO_ENTRIES = arrayOf("Any", "Sub", "Dub")
+            private val AUDIO_VALUES = arrayOf(null, "sub", "dub")
+        }
+    }
+
     // ========================= Checkbox groups =========================
 
     /** Group of TriState boxes: tap cycles ignore → include → exclude (site-native semantics). */
@@ -83,6 +91,7 @@ object Filters {
             SeasonFilter(),
             FormatFilter(),
             StatusFilter(),
+            LanguageFilter(),
         )
     }
 }

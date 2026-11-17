@@ -46,8 +46,6 @@ abstract class WcoTheme :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
 
-    override val lang = "en"
-
     override val supportsLatest = true
 
     override fun headersBuilder() = Headers.Builder()
@@ -268,7 +266,7 @@ abstract class WcoTheme :
                 fhd?.takeIf(String::isNotBlank)?.let { Pair("1080p", it) },
             ).map {
                 val videoUrl = "$server/getvid?evid=" + it.second
-                Video(videoUrl, it.first, videoUrl)
+                Video(videoUrl = videoUrl, videoTitle = it.first)
             }
         }
     }

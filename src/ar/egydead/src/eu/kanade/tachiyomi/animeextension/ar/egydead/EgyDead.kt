@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.annotation.Source
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMap
@@ -25,17 +26,13 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class EgyDead :
+@Source
+abstract class EgyDead :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
 
-    override val name = "Egy Dead"
-
     // TODO: Check frequency of url changes to potentially
     // add back overridable baseurl preference
-    override val baseUrl = "https://egydead.space"
-
-    override val lang = "ar"
 
     override val supportsLatest = true
 
@@ -147,7 +144,7 @@ class EgyDead :
             val script = request.selectFirst("script:containsData(sources)")!!.data()
             val streamLink = Regex("sources:\\s*\\[\\{\\s*\\t*file:\\s*[\"']([^\"']+)").find(script)!!.groupValues[1]
             val quality = Regex("'qualityLabels'\\s*:\\s*\\{\\s*\".*?\"\\s*:\\s*\"(.*?)\"").find(script)!!.groupValues[1]
-            Video(streamLink, "StreamHide: $quality", streamLink).let(::listOf)
+            Video(videoUrl = streamLink, videoTitle = "StreamHide: $quality").let(::listOf)
         }
 
         STREAMWISH_REGEX.containsMatchIn(url) -> {
@@ -158,7 +155,7 @@ class EgyDead :
             val request = client.newCall(GET(url, headers)).awaitSuccess().useAsJsoup()
             val data = request.selectFirst("script:containsData(sources)")!!.data()
             val streamLink = Regex("sources:\\s*\\[\\{\\s*\\t*file:\\s*[\"']([^\"']+)").find(data)!!.groupValues[1]
-            listOf(Video(streamLink, "Mirror: High Quality", streamLink))
+            listOf(Video(videoUrl = streamLink, videoTitle = "Mirror: High Quality"))
         }
 
         url.contains("uqload") -> {
@@ -166,7 +163,7 @@ class EgyDead :
             val request = client.newCall(GET(newURL, headers)).awaitSuccess().useAsJsoup()
             val data = request.selectFirst("script:containsData(sources)")!!.data()
             val streamLink = data.substringAfter("sources: [\"").substringBefore("\"]")
-            listOf(Video(streamLink, "Uqload: Mirror", streamLink))
+            listOf(Video(videoUrl = streamLink, videoTitle = "Uqload: Mirror"))
         }
 
         else -> null

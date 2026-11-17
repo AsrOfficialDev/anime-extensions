@@ -21,6 +21,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.AnimeHttpLegacySource
 import keiyoushi.utils.formatBytes
 import keiyoushi.utils.getPreferencesLazy
@@ -37,17 +38,14 @@ import okhttp3.Response
 import uy.kohesive.injekt.injectLazy
 import java.net.URLEncoder
 
-class GoogleDriveIndex :
+@Source
+abstract class GoogleDriveIndex :
     AnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-
-    override val name = "GoogleDriveIndex"
 
     override val baseUrl by lazy {
         preferences.domainList.split(",").first().removeName()
     }
-
-    override val lang = "all"
 
     private var pageToken: String? = ""
 
@@ -453,10 +451,10 @@ class GoogleDriveIndex :
 
         val script = doc.selectFirst("script:containsData(videodomain)")?.data()
             ?: doc.selectFirst("script:containsData(downloaddomain)")?.data()
-            ?: return listOf(Video(url, "Video", url))
+            ?: return listOf(Video(videoUrl = url, videoTitle = "Video"))
 
         if (script.contains("\"second_domain_for_dl\":false")) {
-            return listOf(Video(url, "Video", url))
+            return listOf(Video(videoUrl = url, videoTitle = "Video"))
         }
 
         val domainUrl = if (script.contains("videodomain", true)) {
@@ -475,7 +473,7 @@ class GoogleDriveIndex :
             domainUrl + url.toHttpUrl().encodedPath
         }
 
-        return listOf(Video(videoUrl, "Video", videoUrl))
+        return listOf(Video(videoUrl = videoUrl, videoTitle = "Video"))
     }
 
     // ============================= Utilities ==============================

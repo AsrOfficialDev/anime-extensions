@@ -10,8 +10,10 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.lib.jsunpacker.JsUnpacker
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
+import keiyoushi.utils.chunkedPairs
 import keiyoushi.utils.parallelFlatMapBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -22,13 +24,8 @@ import org.jsoup.nodes.Element
 import uy.kohesive.injekt.injectLazy
 import keiyoushi.lib.synchrony.Deobfuscator as Synchrony
 
-class NimeGami : ParsedAnimeHttpLegacySource() {
-
-    override val name = "NimeGami"
-
-    override val baseUrl = "https://nimegami.id"
-
-    override val lang = "id"
+@Source
+abstract class NimeGami : ParsedAnimeHttpLegacySource() {
 
     override val supportsLatest = true
 
@@ -181,7 +178,7 @@ class NimeGami : ParsedAnimeHttpLegacySource() {
                     .selectFirst("source[src]")
                     ?.attr("src")
                     ?.let {
-                        listOf(Video(it, "Berkasdrive - $quality", it, headers))
+                        listOf(Video(videoUrl = it, videoTitle = "Berkasdrive - $quality", headers = headers))
                     } ?: emptyList()
             }
 
@@ -200,7 +197,7 @@ class NimeGami : ParsedAnimeHttpLegacySource() {
                     ?.substringAfter("file\":\"", "")
                     ?.substringBefore('"')
                     ?.takeIf(String::isNotBlank)
-                    ?.let { listOf(Video(it, "HXFile - $quality", it, headers)) }
+                    ?.let { listOf(Video(videoUrl = it, videoTitle = "HXFile - $quality", headers = headers)) }
                     ?: emptyList()
             }
 
@@ -232,15 +229,9 @@ class NimeGami : ParsedAnimeHttpLegacySource() {
             .body.string()
             .let(Synchrony::deobfuscateScript)
             ?.let(urlPartRegex::findAll)
-            ?.map { it.groupValues.drop(1) }
-            ?.flatten()
-            ?.chunked(2)
-            ?.mapNotNull { videoPair ->
-                runCatching {
-                    val (part, videoUrl) = videoPair
-                    Video(videoUrl, "$quality - $part", videoUrl, headers)
-                }.getOrNull()
-            }
+            ?.map { it.groupValues[1] }
+            ?.chunkedPairs()
+            ?.map { (part, videoUrl) -> Video(videoUrl = videoUrl, videoTitle = "$quality - $part", headers = headers) }
             ?.toList()
             ?: emptyList()
     }

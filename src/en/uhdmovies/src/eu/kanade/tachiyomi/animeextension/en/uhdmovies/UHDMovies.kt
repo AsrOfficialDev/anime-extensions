@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMap
@@ -30,11 +31,10 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.injectLazy
 
-class UHDMovies :
+@Source
+abstract class UHDMovies :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-
-    override val name = "UHD Movies"
 
     override val baseUrl by lazy {
         preferences.getString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT)!!
@@ -62,8 +62,6 @@ class UHDMovies :
             }
         }.getOrDefault(baseUrl)
     }
-
-    override val lang = "en"
 
     override val supportsLatest = false
 
@@ -226,7 +224,7 @@ class UHDMovies :
                 videos.isEmpty() -> {
                     extractGDriveLink(url, quality).ifEmpty {
                         getDirectLink(url, "instant", "/mfile/")?.let {
-                            listOf(Video(it, "$quality - GDrive Instant link", it))
+                            listOf(Video(videoUrl = it, videoTitle = "$quality - GDrive Instant link"))
                         } ?: emptyList()
                     }
                 }
@@ -325,7 +323,7 @@ class UHDMovies :
             emptyList()
         } else {
             val realLink = link.attr("action")
-            listOf(Video(realLink, "$quality - Gdrive$size", realLink))
+            listOf(Video(videoUrl = realLink, videoTitle = "$quality - Gdrive$size"))
         }
     }
 

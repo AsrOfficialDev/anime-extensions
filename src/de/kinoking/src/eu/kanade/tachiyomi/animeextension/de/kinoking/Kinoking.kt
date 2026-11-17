@@ -9,16 +9,13 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import okhttp3.FormBody
 import okhttp3.Response
 import org.jsoup.nodes.Element
 
-class Kinoking :
-    DooPlay(
-        "de",
-        "Kinoking",
-        "https://kinoking.cc",
-    ) {
+@Source
+abstract class Kinoking : DooPlay() {
     companion object {
         private const val PREF_HOSTER_KEY = "preferred_hoster"
         private const val PREF_HOSTER_TITLE = "Standard-Hoster"
@@ -96,7 +93,7 @@ class Kinoking :
         }
 
         link.contains("filehosted") && hosterSelection.contains("filehosted") -> {
-            listOf(Video(link, "Filehosted", link))
+            listOf(Video(videoUrl = link, videoTitle = "Filehosted"))
         }
 
         else -> null

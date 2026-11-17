@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
@@ -22,15 +23,10 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class Cimaleek :
+@Source
+abstract class Cimaleek :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-
-    override val name = "سيما ليك"
-
-    override val baseUrl = "https://m.cimaleek.to"
-
-    override val lang = "ar"
 
     override val supportsLatest = true
 
@@ -143,7 +139,7 @@ class Cimaleek :
         val webViewResult = webViewResolver.getUrl(embedUrl, referer)
         return when {
             ".mp4" in webViewResult.url -> {
-                Video(webViewResult.url, element.text(), webViewResult.url, headers = referer).let(::listOf)
+                Video(videoUrl = webViewResult.url, videoTitle = element.text(), headers = referer).let(::listOf)
             }
 
             ".m3u8" in webViewResult.url -> {

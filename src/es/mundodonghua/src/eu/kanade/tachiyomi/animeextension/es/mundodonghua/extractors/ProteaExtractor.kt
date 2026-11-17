@@ -11,7 +11,7 @@ import org.jsoup.Connection
 import org.jsoup.Jsoup
 import uy.kohesive.injekt.injectLazy
 
-class ProteaExtractor {
+class ProteaExtractor(private val baseUrl: String) {
     private val json: Json by injectLazy()
     fun videosFromUrl(url: String, qualityPrefix: String = "Protea", headers: Headers): List<Video> {
         val videoList = mutableListOf<Video>()
@@ -30,7 +30,7 @@ class ProteaExtractor {
                         .set("accept", "*/*")
                         .set("accept-language", "es-MX,es-419;q=0.9,es;q=0.8,en;q=0.7")
                         .set("dnt", "1")
-                        .set("referer", "https://www.mundodonghua.com/")
+                        .set("referer", "$baseUrl/")
                         .set("sec-ch-ua", "\"Chromium\";v=\"104\", \" Not A;Brand\";v=\"99\", \"Google Chrome\";v=\"104\"")
                         .set("sec-ch-ua-mobile", "?0")
                         .set("sec-ch-ua-platform", "\"Windows\"")
@@ -40,7 +40,7 @@ class ProteaExtractor {
                         .set("sec-gpc", "1")
                         .set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36")
                         .build()
-                    videoList.add(Video("https://$urlVideo", quality, "https://$urlVideo", headers = newHeaders))
+                    videoList.add(Video(videoUrl = "https://$urlVideo", videoTitle = quality, headers = newHeaders))
                 }
             }
         }

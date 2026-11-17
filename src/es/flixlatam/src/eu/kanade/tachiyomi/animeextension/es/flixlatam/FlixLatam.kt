@@ -25,6 +25,7 @@ import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.annotation.Source
 import keiyoushi.lib.cryptoaes.CryptoAES
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMap
@@ -44,12 +45,8 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
 
-class FlixLatam :
-    DooPlay(
-        "es",
-        "FlixLatam",
-        "https://flixlatam.com",
-    ) {
+@Source
+abstract class FlixLatam : DooPlay() {
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/pelicula/page/$page")
 
     override fun popularAnimeSelector() = latestUpdatesSelector()
@@ -185,7 +182,7 @@ class FlixLatam :
             .awaitSuccess().useAsJsoup()
 
         val videoUrl = amazonApi.toString().substringAfter("\"FOLDER\":").substringAfter("tempLink\":\"").substringBefore("\"")
-        return listOf(Video(videoUrl, "$prefix Amazon", videoUrl))
+        return listOf(Video(videoUrl = videoUrl, videoTitle = "$prefix Amazon"))
     }
 
     private fun extractNewExtractorLinks(doc: Document, htmlContent: String): List<Pair<String, String>>? {

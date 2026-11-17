@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.annotation.Source
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
@@ -32,15 +33,10 @@ import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class OtakuDesu :
+@Source
+abstract class OtakuDesu :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-
-    override val name = "OtakuDesu"
-
-    override val baseUrl = "https://otakudesu.blog"
-
-    override val lang = "id"
 
     override val supportsLatest = true
 
@@ -235,7 +231,7 @@ class OtakuDesu :
                 val videoUrl = script.substringAfter("sources:[{")
                     .substringAfter("file':'")
                     .substringBefore("'")
-                listOf(Video(videoUrl, "DesuStream - $quality", videoUrl, headers))
+                listOf(Video(videoUrl = videoUrl, videoTitle = "DesuStream - $quality", headers = headers))
             }
         }
 
@@ -244,7 +240,7 @@ class OtakuDesu :
                 val doc = it.useAsJsoup()
                 val script = doc.selectFirst("script:containsData(player.src)")!!.data()
                 val videoUrl = script.substringAfter("src: \"").substringBefore('"')
-                listOf(Video(videoUrl, "Mp4upload - $quality", videoUrl, headers))
+                listOf(Video(videoUrl = videoUrl, videoTitle = "Mp4upload - $quality", headers = headers))
             }
         }
 

@@ -21,6 +21,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
@@ -39,15 +40,10 @@ import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class LegionAnime :
+@Source
+abstract class LegionAnime :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-
-    override val name = "LegionAnime"
-
-    override val baseUrl = "https://legionanime.club/api"
-
-    override val lang = "es"
 
     override val supportsLatest = true
 
@@ -271,16 +267,16 @@ class LegionAnime :
         url.contains("jkanime") -> listOfNotNull(JkanimeExtractor(client).getDesuFromUrl(url))
         url.contains("/stream/amz.php?") -> {
             val videoUrl = JkanimeExtractor(client).amazonExtractor(url).takeIf { it.isNotBlank() } ?: return emptyList()
-            listOf(Video(videoUrl, server, videoUrl))
+            listOf(Video(videoUrl = videoUrl, videoTitle = server))
         }
         url.contains("yourupload") -> YourUploadExtractor(client).videoFromUrl(url, headers)
         url.contains("mp4upload") -> Mp4uploadExtractor(client).videosFromUrl(url, headers)
         url.contains("dood") -> listOfNotNull(DoodExtractor(client).videoFromUrl(url))
         url.contains("ok.ru") -> OkruExtractor(client).videosFromUrl(url)
         url.startsWith("http") && url.contains("flvvideo") && (url.endsWith(".m3u8") || url.endsWith(".mp4")) ->
-            listOf(Video(url, "VideoFLV", url))
+            listOf(Video(videoUrl = url, videoTitle = "VideoFLV"))
         url.startsWith("http") && url.contains("cdnlat4animecen") && (url.endsWith(".class") || url.endsWith(".m3u8") || url.endsWith(".mp4")) ->
-            listOf(Video(url, "AnimeCen", url))
+            listOf(Video(videoUrl = url, videoTitle = "AnimeCen"))
         url.contains("uqload") -> UqloadExtractor(client).videosFromUrl(url)
         else -> emptyList()
     }

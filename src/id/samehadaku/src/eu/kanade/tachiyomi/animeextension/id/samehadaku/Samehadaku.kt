@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.AnimeHttpLegacySource
 import keiyoushi.utils.UrlUtils
 import keiyoushi.utils.bodyString
@@ -31,13 +32,11 @@ import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class Samehadaku :
+@Source
+abstract class Samehadaku :
     AnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-    override val name: String = "Samehadaku"
 
-    override val baseUrl: String = "https://v2.samehadaku.how"
-    override val lang: String = "id"
     override val supportsLatest: Boolean = true
 
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
@@ -244,7 +243,7 @@ class Samehadaku :
             "mega.nz" in link -> emptyList()
 
             link.contains(".mp4") || link.contains(".webm") || link.contains(".m3u8") -> {
-                listOf(Video(link, server, link, videoHeaders))
+                listOf(Video(videoUrl = link, videoTitle = server, headers = videoHeaders))
             }
 
             "filedon" in link || "uservideo" in link || "userdrive" in link || "samevideo" in link -> {
@@ -253,14 +252,14 @@ class Samehadaku :
                 val json = JSONObject(dataPage)
                 val props = json.getJSONObject("props")
                 val videoUrl = props.getString("url")
-                listOf(Video(videoUrl, server, videoUrl, videoHeaders))
+                listOf(Video(videoUrl = videoUrl, videoTitle = server, headers = videoHeaders))
             }
 
             "krakenfiles" in link -> {
                 val doc = client.newCall(GET(link, videoHeaders)).awaitSuccess().useAsJsoup()
                 val getUrl = doc.selectFirst("source")?.attr("src") ?: return emptyList()
                 val videoUrl = UrlUtils.fixUrl(getUrl)?.replace("&amp;", "&") ?: return emptyList()
-                listOf(Video(videoUrl, server, videoUrl, videoHeaders))
+                listOf(Video(videoUrl = videoUrl, videoTitle = server, headers = videoHeaders))
             }
 
             // Blogger — now delegates entirely to BloggerExtractor
@@ -270,7 +269,7 @@ class Samehadaku :
                 val doc = client.newCall(GET(link, videoHeaders)).awaitSuccess().useAsJsoup()
                 val videoUrl = doc.selectFirst("video source")?.attr("src") ?: return emptyList()
                 val finalUrl = UrlUtils.fixUrl(videoUrl) ?: return emptyList()
-                listOf(Video(finalUrl, server, finalUrl, videoHeaders))
+                listOf(Video(videoUrl = finalUrl, videoTitle = server, headers = videoHeaders))
             }
         }
     }

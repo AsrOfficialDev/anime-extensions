@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.annotation.Source
 import keiyoushi.utils.AnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
@@ -39,12 +40,10 @@ enum class FilterUpdateState {
     FAILED,
 }
 
-class Hanime1 :
+@Source
+abstract class Hanime1 :
     AnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-    override val baseUrl = "https://hanime1.me"
-    override val lang = "zh"
-    override val name = "Hanime1.me"
     override val supportsLatest: Boolean
         get() = true
 
@@ -116,13 +115,13 @@ class Hanime1 :
         return sourceList.map {
             val quality = it.attr("size")
             val url = it.attr("src")
-            Video(url, "${quality}P", videoUrl = url)
+            Video(videoUrl = url, videoTitle = "${quality}P")
         }.sortedByDescending { preferQuality == it.videoTitle }
             .ifEmpty {
                 // Try to find the source from the script content.
                 val videoUrl = doc.select("script:containsData(source)").first()!!.data()
                     .substringAfter("source = '").substringBefore("'")
-                listOf(Video(videoUrl, "Raw", videoUrl = videoUrl))
+                listOf(Video(videoUrl = videoUrl, videoTitle = "Raw"))
             }
     }
 

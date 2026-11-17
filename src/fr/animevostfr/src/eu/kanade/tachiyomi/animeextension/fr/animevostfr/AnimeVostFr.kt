@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.getPreferencesLazy
 import okhttp3.Headers
@@ -21,15 +22,10 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class AnimeVostFr :
+@Source
+abstract class AnimeVostFr :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-
-    override val name = "AnimeVostFr"
-
-    override val baseUrl = "https://animevostfr.tv"
-
-    override val lang = "fr"
 
     override val supportsLatest = true
 
@@ -214,7 +210,7 @@ class AnimeVostFr :
                     .split("#EXT-X-STREAM-INF:").map {
                         val quality = it.substringAfter("RESOLUTION=").split(",")[0].split("\n")[0].substringAfter("x") + "p ($serverName)"
                         val videoUrl = it.substringAfter("\n").substringBefore("\n")
-                        playlist.add(Video(videoUrl, quality, videoUrl, headers = headersVideo))
+                        playlist.add(Video(videoUrl = videoUrl, videoTitle = quality, headers = headersVideo))
                     }
             }
 

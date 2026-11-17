@@ -14,6 +14,7 @@ import okhttp3.Response
 
 class JkanimeExtractor(
     private val client: OkHttpClient,
+    private val baseUrl: String,
 ) {
 
     fun getNozomiFromUrl(url: String, prefix: String = ""): List<Video> {
@@ -23,15 +24,15 @@ class JkanimeExtractor(
 
         val gsplayBody = "data=$dataKey".toRequestBody("application/x-www-form-urlencoded".toMediaTypeOrNull())
 
-        val location = client.newCall(POST("https://jkanime.net/gsplay/redirect_post.php", dataKeyHeaders, gsplayBody))
+        val location = client.newCall(POST("$baseUrl/gsplay/redirect_post.php", dataKeyHeaders, gsplayBody))
             .execute().request.url.toString()
         val postKey = location.substringAfter("player.html#")
 
         val nozomiBody = "v=$postKey".toRequestBody("application/x-www-form-urlencoded".toMediaTypeOrNull())
-        val nozomiResponse = client.newCall(POST("https://jkanime.net/gsplay/api.php", body = nozomiBody)).execute()
+        val nozomiResponse = client.newCall(POST("$baseUrl/gsplay/api.php", body = nozomiBody)).execute()
         val nozomiUrl = nozomiResponse.body.string().parseAs<NozomiResponse>().file ?: return emptyList()
 
-        return listOf(Video(nozomiUrl, "${prefix}Nozomi", nozomiUrl))
+        return listOf(Video(videoUrl = nozomiUrl, videoTitle = "${prefix}Nozomi"))
     }
 
     fun parseVideoFromDpPlayer(response: Response, quality: String = ""): List<Video> {
@@ -41,7 +42,7 @@ class JkanimeExtractor(
             ?.data()?.substringAfter("url: '")
             ?.substringBefore("'") ?: return emptyList()
 
-        return listOf(Video(streamUrl, quality, streamUrl))
+        return listOf(Video(videoUrl = streamUrl, videoTitle = quality))
     }
 
     fun getDesuFromUrl(url: String, prefix: String = ""): List<Video> {
@@ -55,7 +56,7 @@ class JkanimeExtractor(
 
         if (contentType.startsWith("video/")) {
             val realUrl = response.request.url.toString()
-            return listOf(Video(realUrl, "${prefix}Desuka", realUrl))
+            return listOf(Video(videoUrl = realUrl, videoTitle = "${prefix}Desuka"))
         }
         return parseVideoFromDpPlayer(response, "${prefix}Desuka")
     }
@@ -63,14 +64,14 @@ class JkanimeExtractor(
     fun getMagiFromUrl(url: String, prefix: String = ""): List<Video> {
         val document = client.newCall(GET(url)).execute().asJsoup()
         val videoUrl = document.selectFirst("""source[src*=".m3u8"]""")?.attr("src") ?: return emptyList()
-        return listOf(Video(videoUrl, "${prefix}Magi", videoUrl))
+        return listOf(Video(videoUrl = videoUrl, videoTitle = "${prefix}Magi"))
     }
 
     fun getMediafireFromUrl(url: String, prefix: String = ""): List<Video> {
         val response = client.newCall(GET(url)).execute()
         val downloadUrl = response.asJsoup().selectFirst("a#downloadButton")?.attr("href")
         if (!downloadUrl.isNullOrBlank()) {
-            return listOf(Video(downloadUrl, "${prefix}MediaFire", downloadUrl))
+            return listOf(Video(videoUrl = downloadUrl, videoTitle = "${prefix}MediaFire"))
         }
         return emptyList()
     }

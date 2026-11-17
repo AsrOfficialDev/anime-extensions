@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.annotation.Source
 import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
@@ -25,14 +26,10 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class Kuramanime :
+@Source
+abstract class Kuramanime :
     ParsedAnimeHttpLegacySource(),
     ConfigurableAnimeSource {
-    override val name = "Kuramanime"
-
-    override val baseUrl = "https://v8.kuramanime.tel"
-
-    override val lang = "id"
 
     override val supportsLatest = true
 
@@ -215,7 +212,7 @@ class Kuramanime :
                 else -> {
                     playerDoc.select("video#player > source").map {
                         val src = it.attr("src")
-                        Video(src, "${it.attr("size")}p - $serverName", src)
+                        Video(videoUrl = src, videoTitle = "${it.attr("size")}p - $serverName")
                     }
                 }
             }

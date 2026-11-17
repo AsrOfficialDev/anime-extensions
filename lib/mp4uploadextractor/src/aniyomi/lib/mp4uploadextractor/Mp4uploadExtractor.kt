@@ -8,6 +8,8 @@ import okhttp3.Headers
 import okhttp3.OkHttpClient
 
 class Mp4uploadExtractor(private val client: OkHttpClient) {
+    // Retain the legacy Video constructor for extensions targeting lib 14.
+    @Suppress("DEPRECATION")
     fun videosFromUrl(url: String, headers: Headers, prefix: String = "", suffix: String = ""): List<Video> {
         val newHeaders = headers.newBuilder()
             .set("referer", REFERER)
@@ -26,7 +28,7 @@ class Mp4uploadExtractor(private val client: OkHttpClient) {
         val resolution = QUALITY_REGEX.find(script)?.groupValues?.let { "${it[1]}p" } ?: "Unknown resolution"
         val quality = "${prefix}Mp4Upload - $resolution$suffix"
 
-        return listOf(Video(videoUrl, quality, videoUrl, newHeaders))
+        return listOf(Video(videoUrl = videoUrl, videoTitle = quality, headers = newHeaders))
     }
 
     companion object {

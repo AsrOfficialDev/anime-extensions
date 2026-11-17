@@ -4,7 +4,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
-import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.toJsonBody
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
@@ -41,7 +41,7 @@ class CdaExtractor(private val client: OkHttpClient) {
         return data.video.qualities.map { quality ->
             if (quality.value == data.video.quality && quality.value != "lq") {
                 val videoUrl = decryptFile(data.video.file)
-                Video(videoUrl, "${prefix}cda.pl - ${quality.key}", videoUrl)
+                Video(videoUrl = videoUrl, videoTitle = "${prefix}cda.pl - ${quality.key}")
             } else {
                 val jsonBody = """
                     {
@@ -56,7 +56,7 @@ class CdaExtractor(private val client: OkHttpClient) {
                             {}
                         ]
                     }
-                """.trimIndent().toJsonRequestBody()
+                """.trimIndent().toJsonBody()
                 val postHeaders = Headers.headersOf(
                     "Content-Type",
                     "application/json",
@@ -69,7 +69,7 @@ class CdaExtractor(private val client: OkHttpClient) {
                 val parsed = json.decodeFromString<PostResponse>(
                     response.body.string(),
                 )
-                Video(parsed.result.resp, "${prefix}cda.pl - ${quality.key}", parsed.result.resp)
+                Video(videoUrl = parsed.result.resp, videoTitle = "${prefix}cda.pl - ${quality.key}")
             }
         }
     }

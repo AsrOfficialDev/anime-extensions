@@ -7,17 +7,14 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.annotation.Source
 import keiyoushi.utils.useAsJsoup
 import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class AnimeBalkan :
-    AnimeStream(
-        "sr",
-        "AnimeBalkan",
-        "https://animebalkan.org",
-    ) {
+@Source
+abstract class AnimeBalkan : AnimeStream() {
     override val animeListUrl = "$baseUrl/animesaprevodom"
 
     override val dateFormatter by lazy {
@@ -60,7 +57,7 @@ class AnimeBalkan :
                 val doc = client.newCall(GET(url)).awaitSuccess().useAsJsoup()
                 val videoUrl = doc.selectFirst("source")?.attr("src")
                     ?: return emptyList()
-                listOf(Video(videoUrl, "Server AB - Default", videoUrl))
+                listOf(Video(videoUrl = videoUrl, videoTitle = "Server AB - Default"))
             }
 
             else -> emptyList()

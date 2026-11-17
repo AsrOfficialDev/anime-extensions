@@ -13,15 +13,18 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.TimeStamp
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import keiyoushi.annotation.Source
 import keiyoushi.network.rateLimit
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.get
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,20 +33,19 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.nanohttpd.protocols.http.NanoHTTPD
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
 
-class AniPM :
+@Source
+abstract class AniPM :
     AnimeHttpSource(),
     ConfigurableAnimeSource {
 
-    override val name = "AniPM"
-    override val lang = "en"
     override val supportsLatest = true
 
     // Status: https://anipm.tv/
-    override val baseUrl = "https://ani.pm"
     private val apiUrl get() = "$baseUrl/api"
 
     override val client = network.client.newBuilder()
@@ -68,7 +70,7 @@ class AniPM :
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     // =============================== Browse ===============================
-    private fun apiHeaders(referer: String = "$baseUrl/anime") = headers.newBuilder()
+    private fun apiHeaders(referer: String = "$baseUrl/") = headers.newBuilder()
         .set("Accept", "application/json, text/plain, */*")
         .set("Referer", referer)
         .build()
@@ -92,6 +94,7 @@ class AniPM :
                 is Filters.StatusFilter -> f.getValue()?.let { url.addQueryParameter("status", it) }
                 is Filters.SeasonFilter -> f.getValue()?.let { url.addQueryParameter("season", it) }
                 is Filters.YearFilter -> f.getValue()?.let { url.addQueryParameter("year", it) }
+                is Filters.LanguageFilter -> f.getValue()?.let { url.addQueryParameter("audio", it) }
 
                 is Filters.GenreFilter -> {
                     f.getIncluded().forEach { url.addQueryParameter("genre", it) }
@@ -119,7 +122,13 @@ class AniPM :
     private fun parseCatalog(response: Response): AnimesPage {
         val dto = response.parseAs<CatalogResponseDto>()
 
-        val animes = dto.items.mapNotNull { it.toSAnime(baseUrl) }
+        val animes = dto.items.mapNotNull { item ->
+            val anime = item.toSAnime(baseUrl)
+            if (anime != null && !item.routeId.isNullOrBlank()) {
+                cacheRouteId(anime.url, item.routeId)
+            }
+            anime
+        }
         return AnimesPage(animes, dto.hasNextPage)
     }
 
@@ -189,28 +198,66 @@ class AniPM :
     }
 
     // ============================== Details ===============================
-    override fun animeDetailsRequest(anime: SAnime): Request = GET(seriesUrl(anime.url), apiHeaders("$baseUrl/anime"))
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(seriesUrl(anime.url), apiHeaders("$baseUrl/"))
 
-    override fun animeDetailsParse(response: Response): SAnime = response.parseAs<SeriesResponseDto>().toSAnime(baseUrl)
+    override fun animeDetailsParse(response: Response): SAnime {
+        val dto = response.parseAs<SeriesResponseDto>()
+        dto.routeId?.takeIf(String::isNotBlank)?.let { routeId ->
+            val handle = stableMainHandle(dto.source, dto.id, dto.anilistId, dto.routeId)
+            if (handle != null) {
+                cacheRouteId(handle, routeId)
+                cacheRouteId("set-${dto.id}", routeId)
+                dto.anilistId?.toLongOrNull()?.let { cacheRouteId("ani-$it", routeId) }
+            }
+        }
+        return dto.toSAnime(baseUrl)
+    }
 
-    override fun getAnimeUrl(anime: SAnime): String = "$baseUrl/anime/${anime.url}"
+    /** Re-bound entries that 404 to the same anime automatically */
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime = resolveSeries(anime.url, anime.title).toSAnime(baseUrl)
+
+    override fun getAnimeUrl(anime: SAnime): String {
+        val fresh = cachedHandle(anime.url) ?: anime.url
+        val routeId = cachedRouteId(anime.url) ?: cachedRouteId(fresh)
+        val path = routeId?.takeIf(String::isNotBlank) ?: cleanHandle(fresh)
+        val prefix = if (isAniHandle(fresh)) "ani" else "anime"
+        return "$baseUrl/$prefix/$path"
+    }
 
     // ============================ Related ============================
     override val disableRelatedAnimesBySearch = true
 
     override suspend fun fetchRelatedAnimeList(anime: SAnime): List<SAnime> {
-        val series = fetchSeries(anime.url)
+        val series = resolveSeries(anime.url, anime.title)
 
-        val related = series.relations.mapNotNull { rel ->
+        val relationPriority = mapOf(
+            "SEQUEL" to 0,
+            "PREQUEL" to 1,
+            "PARENT" to 2,
+            "CHILD" to 3,
+            "SIDE_STORY" to 4,
+            "ALTERNATIVE" to 5,
+            "SPIN_OFF" to 6,
+            "OTHER" to 7,
+            "CHARACTER" to 8,
+            "SUMMARY" to 9,
+        )
+
+        val sortedRelations = series.relations.sortedBy { rel ->
+            relationPriority[rel.relation?.uppercase()] ?: 10
+        }
+
+        val related = sortedRelations.mapNotNull { rel ->
             val handle = rel.toHandle() ?: return@mapNotNull null
+            val title = rel.title.takeIf(String::isNotBlank) ?: return@mapNotNull null
             SAnime.create().apply {
                 url = handle
-                title = rel.title ?: return@mapNotNull null
-                thumbnail_url = absoluteCover(baseUrl, rel.poster)
+                this.title = title
+                thumbnail_url = rel.toThumbnailUrl(baseUrl)
             }
         }
 
-        val recommended = fetchRecommendations(series.id)
+        val recommended = fetchRecommendations(series)
 
         return buildList {
             val seen = HashSet<String>()
@@ -219,8 +266,8 @@ class AniPM :
         }
     }
 
-    private suspend fun fetchRecommendations(seriesId: Long): List<SAnime> = try {
-        val context = "anime:$seriesId"
+    private suspend fun fetchRecommendations(series: SeriesResponseDto): List<SAnime> = try {
+        val context = series.anilistId?.takeIf(String::isNotBlank)?.let { "ani:$it" } ?: "anime:${series.id}"
         val res = client.get(
             "$apiUrl/recommend".toHttpUrl().newBuilder()
                 .addQueryParameter("limit", "25")
@@ -239,7 +286,8 @@ class AniPM :
 
     // ============================== Episodes ==============================
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val dto = fetchSeries(anime.url)
+        val dto = resolveSeries(anime.url, anime.title)
+        val handle = stableMainHandle(dto.source, dto.id, dto.anilistId, dto.routeId) ?: anime.url
 
         val fillerSet = fetchFillerSet(dto.anilistId?.toLongOrNull(), dto.title)
 
@@ -247,14 +295,17 @@ class AniPM :
             SEpisode.create().apply {
                 val numStr = fmtNum(ep.number)
                 episode_number = ep.number.toFloat()
-                url = "${anime.url}/$numStr"
+                url = "$handle/$numStr"
+                if (!ep.routeId.isNullOrBlank()) {
+                    cacheEpisodeRouteId(handle, numStr, ep.routeId)
+                }
                 val realTitle = ep.title?.takeIf { it.isNotBlank() && !it.startsWith("Episode ", true) }
                 name = buildString {
                     append("Episode $numStr")
                     realTitle?.let { append(" - $it") }
                 }
                 summary = ep.description
-                preview_url = absoluteCover(baseUrl, ep.thumbnail)
+                preview_url = episodePreviewUrl(baseUrl, dto.source, dto.anilistId, dto.routeId, numStr, ep.thumbnail)
                 fillermark = ep.number in fillerSet
                 scanlator = when {
                     ep.sub && ep.dub -> "Sub & Dub"
@@ -269,7 +320,12 @@ class AniPM :
 
     override fun getEpisodeUrl(episode: SEpisode): String {
         val (handle, num) = episode.url.split("/").let { it[0] to it.getOrElse(1) { "" } }
-        return "$baseUrl/anime/$handle?ep=$num"
+        val fresh = cachedHandle(handle) ?: handle
+        val routeId = cachedRouteId(handle) ?: cachedRouteId(fresh)
+        val path = routeId?.takeIf(String::isNotBlank) ?: cleanHandle(fresh)
+        val prefix = if (isAniHandle(fresh)) "ani" else "anime"
+        val epRoute = cachedEpisodeRouteId(handle, num) ?: num
+        return "$baseUrl/$prefix/$path?ep=$epRoute"
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> = throw UnsupportedOperationException()
@@ -280,17 +336,14 @@ class AniPM :
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val handle = episode.url.substringBefore('/')
         val epNum = episode.url.substringAfterLast('/')
-        val dto = fetchSeries(handle)
+        val dto = resolveSeries(handle)
         val ep = dto.episodes.firstOrNull { fmtNum(it.number) == epNum }
             ?: return emptyList()
 
-        val epParam = ep.routeId ?: epNum
+        val provider = dto.source?.takeIf(String::isNotBlank) ?: "settlar"
+
         val bootPackage = try {
-            val bootRes = client.get(
-                "$apiUrl/anime/playback-bootstrap/settlar/${dto.id}?ep=$epParam&lang=sub",
-                apiHeaders(),
-            )
-            val boot = bootRes.use { it.parseAs<BootstrapDto>() }
+            val boot = fetchBootstrap(provider, dto.id.toString(), epNum, "sub")
             val epKey = fmtNum(ep.number)
             boot.anipmPackages?.episodes?.get(epKey)
         } catch (_: Exception) {
@@ -304,16 +357,16 @@ class AniPM :
 
         return buildList {
             if (hasSub && "[Sub]" !in excludedAudioTypes) {
-                add(Hoster(hosterName = "[Sub]", internalData = "anipm::${dto.id}/$epNum/sub"))
+                add(Hoster(hosterName = "[Sub]", internalData = "anipm::$provider/${dto.id}/$epNum/sub"))
             }
             if (hasSubhard && "[Hard Sub]" !in excludedAudioTypes) {
-                add(Hoster(hosterName = "[Hard Sub]", internalData = "anipm::${dto.id}/$epNum/subhard"))
+                add(Hoster(hosterName = "[Hard Sub]", internalData = "anipm::$provider/${dto.id}/$epNum/subhard"))
             }
             if (hasDub && "[Dub]" !in excludedAudioTypes) {
-                add(Hoster(hosterName = "[Dub]", internalData = "anipm::${dto.id}/$epNum/dub"))
+                add(Hoster(hosterName = "[Dub]", internalData = "anipm::$provider/${dto.id}/$epNum/dub"))
             }
             if (hasDubhard && "[Hard Dub]" !in excludedAudioTypes) {
-                add(Hoster(hosterName = "[Hard Dub]", internalData = "anipm::${dto.id}/$epNum/dubhard"))
+                add(Hoster(hosterName = "[Hard Dub]", internalData = "anipm::$provider/${dto.id}/$epNum/dubhard"))
             }
         }
     }
@@ -343,19 +396,19 @@ class AniPM :
         .build()
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val (handle, epNum, lang) = hoster.internalData.removePrefix("anipm::").split("/")
+        val parts = hoster.internalData.removePrefix("anipm::").split("/")
+        val provider = parts[0]
+        val id = parts[1]
+        val epNum = parts[2]
+        val lang = parts[3]
+
         return try {
-            // 1) Bootstrap — numeric settlar ID (verified: /playback-bootstrap/settlar/8922)
-            val settlarId = handle
-            val bootLang = if (lang.startsWith("dub")) "dub" else "sub"
-            val boot = client.get(
-                "$apiUrl/anime/playback-bootstrap/settlar/$settlarId?ep=$epNum&lang=$bootLang",
-                apiHeaders(),
-            ).use { it.parseAs<BootstrapDto>() }
+            // 1) Bootstrap
+            val boot = fetchBootstrap(provider, id, epNum, lang)
             val selection = boot.settlarSelection?.takeIf(String::isNotBlank)
                 ?: return emptyList()
 
-            // 2) Exchange selection for a settlar embed token (watch-page endpoint)
+            // 2) Exchange selection for a settlar embed token
             val settlar = client.get(
                 "$apiUrl/anime/settlar/session".toHttpUrl().newBuilder()
                     .addQueryParameter("selection", selection)
@@ -369,7 +422,7 @@ class AniPM :
             val token = settlar.embedUrl?.toHttpUrl()?.queryParameter("t")
                 ?: return emptyList()
 
-            // 3) Embed session → signed HLS manifest URL
+            // 3) Embed session → signed HLS manifest URL & subtitles
             val embed = client.get("$embedApi/api/embed/session?t=$token", embedHeaders)
                 .use { it.parseAs<EmbedSessionDto>() }
             val manifest = embed.source?.takeIf(String::isNotBlank)
@@ -384,6 +437,12 @@ class AniPM :
                 }
             }
 
+            val embedSubs = embed.subtitles.mapNotNull { sub ->
+                val subUrl = sub.url?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                val subLabel = sub.label ?: sub.srclang ?: "Subtitle"
+                Track(subUrl, subLabel)
+            }
+
             /*** We route through [SettlarProxy]. */
             val proxy = getProxy()
             val vids = playlistUtils.extractFromHls(
@@ -392,12 +451,11 @@ class AniPM :
                 masterHeaders = headers,
                 videoHeaders = headers,
             ).map { video ->
-                if (video.subtitleTracks.isNotEmpty()) {
-                    video.copy(
-                        subtitleTracks = video.subtitleTracks.map { track ->
-                            track.copy(url = proxy.subtitleUrl(track.url))
-                        },
-                    )
+                val subtitles = video.subtitleTracks.map { track ->
+                    track.copy(url = proxy.subtitleUrl(track.url))
+                }
+                if (subtitles.isNotEmpty()) {
+                    video.copy(subtitleTracks = subtitles)
                 } else {
                     video
                 }
@@ -426,11 +484,246 @@ class AniPM :
     }
 
     // ============================ Series fetch ============================
-    private fun seriesUrl(handle: String): String = "$apiUrl/anime/series/${handle.removePrefix("set-")}?routes=e3"
+    private fun isAniHandle(handle: String): Boolean = handle.startsWith("ani-") || handle.startsWith("ani/")
 
-    private suspend fun fetchSeries(handle: String): SeriesResponseDto {
-        val res = client.get(seriesUrl(handle), apiHeaders())
-        return res.use { it.parseAs<SeriesResponseDto>() }
+    private fun cleanHandle(handle: String): String = handle.removePrefix("ani-").removePrefix("ani/")
+        .removePrefix("set-").removePrefix("series/").removePrefix("anime/")
+
+    private fun seriesUrl(handle: String): String = apiPath(useAniEndpoint = isAniHandle(handle), cleanHandle(handle))
+
+    private fun apiPath(useAniEndpoint: Boolean, key: String): String = "$apiUrl/anime/${if (useAniEndpoint) "ani" else "series"}/$key?routes=e4"
+
+    /**
+     * Resolution URLs, primary first. Clean handles (stable ids) dissolve into
+     * a single request; legacy handles carry slugs that the site regenerates
+     * periodically, so their numeric tail is tried before the slug itself.
+     */
+    private fun fetchUrls(handle: String): List<String> {
+        val clean = cleanHandle(handle)
+        val numericTail = clean.substringAfterLast('-').toLongOrNull()?.toString()
+
+        return buildList {
+            when {
+                isAniHandle(handle) -> {
+                    add(apiPath(useAniEndpoint = true, key = clean))
+                    numericTail?.let { add(apiPath(useAniEndpoint = true, key = it)) }
+                }
+                handle.startsWith("set-") -> {
+                    add(apiPath(useAniEndpoint = false, key = clean))
+                    numericTail?.let { add(apiPath(useAniEndpoint = false, key = it)) }
+                }
+                else -> {
+                    // Legacy raw routeId handles: family unknown, try clean first, then numeric tail
+                    add(apiPath(useAniEndpoint = false, key = clean))
+                    add(apiPath(useAniEndpoint = true, key = clean))
+                    numericTail?.let { add(apiPath(useAniEndpoint = false, key = it)) }
+                    numericTail?.let { add(apiPath(useAniEndpoint = true, key = it)) }
+                }
+            }
+        }.distinct()
+    }
+
+    private fun matchesHandle(handle: String, dto: SeriesResponseDto, title: String = ""): Boolean {
+        val clean = cleanHandle(handle)
+        val tail = clean.substringAfterLast('-').toLongOrNull()
+        return when {
+            isAniHandle(handle) -> dto.anilistId?.toLongOrNull() == tail || dto.routeId == clean
+            handle.startsWith("set-") -> dto.id == tail || dto.routeId == clean
+            else -> {
+                if (dto.routeId == clean) return true
+                val matchesTail = tail != null && (dto.id == tail || dto.anilistId?.toLongOrNull() == tail)
+                if (!matchesTail) return false
+                if (title.isBlank()) return true
+                normalizeTitle(dto.title) == normalizeTitle(title)
+            }
+        }
+    }
+
+    private suspend fun tryFetchSeries(handle: String, title: String = ""): Pair<String, SeriesResponseDto>? {
+        for (url in fetchUrls(handle)) {
+            try {
+                client.get(url, apiHeaders()).use { response ->
+                    val dto = response.parseAs<SeriesResponseDto>()
+                    if (matchesHandle(handle, dto, title)) {
+                        val stableHandle = stableMainHandle(dto.source, dto.id, dto.anilistId, dto.routeId)
+                            ?: dto.routeId
+                            ?: handle
+                        dto.routeId?.takeIf(String::isNotBlank)?.let { routeId ->
+                            cacheRouteId(handle, routeId)
+                            cacheRouteId(stableHandle, routeId)
+                            cacheRouteId("set-${dto.id}", routeId)
+                            dto.anilistId?.toLongOrNull()?.let { aid ->
+                                cacheRouteId("ani-$aid", routeId)
+                            }
+                        }
+                        dto.episodes.forEach { ep ->
+                            if (!ep.routeId.isNullOrBlank()) {
+                                val numStr = fmtNum(ep.number)
+                                cacheEpisodeRouteId(handle, numStr, ep.routeId)
+                                cacheEpisodeRouteId(stableHandle, numStr, ep.routeId)
+                            }
+                        }
+                        return stableHandle to dto
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                // try the next candidate
+            }
+        }
+        return null
+    }
+
+    /**
+     * Resolves any stored handle to a series. Library entries may still hold
+     * slugs rotated away by the site, so resolution is layered:
+     *  1. the re-bound handle cached for this stored handle, if any,
+     *  2. the id/slug chain of the stored handle itself,
+     *  3. only after every lookup 404s: a single /api/anime/search re-bind
+     *     against the entry's title, verified by id or accepted only on one
+     *     exact match.
+     */
+    private suspend fun resolveSeries(handle: String, title: String = ""): SeriesResponseDto {
+        val cached = cachedHandle(handle)
+        if (cached != null && handleCacheKey(cached) != handleCacheKey(handle)) {
+            tryFetchSeries(cached, title)?.let { (resolvedHandle, dto) ->
+                cacheHandle(handle, resolvedHandle)
+                return dto
+            }
+        }
+
+        tryFetchSeries(handle, title)?.let { (resolvedHandle, dto) ->
+            cacheHandle(handle, resolvedHandle)
+            return dto
+        }
+
+        if (title.isBlank()) {
+            throw IOException("Series not found: $handle")
+        }
+
+        val rebound = rescueSeries(handle, title)
+            ?: throw IOException("Series not found for '$title' (handle: $handle)")
+
+        cacheHandle(handle, rebound.first)
+        return rebound.second
+    }
+
+    /**
+     * Re-binds a dead handle via /api/anime/search. Prefer items whose ids
+     * match the old handle's numeric tail (family-proof); slugs-free handles
+     * (e.g. migrated hash URLs) can only be matched by title, so a single
+     * exact match is accepted and anything ambiguous is rejected — a wrong
+     * re-bind is worse than a failed entry.
+     */
+    private suspend fun rescueSeries(handle: String, title: String): Pair<String, SeriesResponseDto>? = try {
+        val items = client.get(
+            "$apiUrl/anime/search".toHttpUrl().newBuilder()
+                .addQueryParameter("q", title)
+                .build(),
+            apiHeaders(),
+        ).use { it.parseAs<CatalogResponseDto>().items }
+
+        val wanted = normalizeTitle(title)
+        val clean = cleanHandle(handle)
+        val tail = clean.substringAfterLast('-').toLongOrNull()
+        val exactMatches = items.filter { item ->
+            val candidate = normalizeTitle(item.title?.takeIf { it.isNotBlank() } ?: return@filter false)
+            candidate == wanted
+        }
+        val substringMatches = items.filter { item ->
+            val candidate = normalizeTitle(item.title?.takeIf { it.isNotBlank() } ?: return@filter false)
+            candidate == wanted || candidate.contains(wanted) || wanted.contains(candidate)
+        }
+        val verified = substringMatches.filter { item ->
+            val tailMatch = tail != null && when {
+                isAniHandle(handle) -> item.anilistId?.toLongOrNull() == tail
+                handle.startsWith("set-") -> item.id == tail
+                else -> item.id == tail || item.anilistId?.toLongOrNull() == tail
+            }
+            tailMatch || item.routeId == clean
+        }
+        val bound = when {
+            verified.isNotEmpty() -> verified
+            tail == null && exactMatches.size == 1 -> exactMatches
+            else -> emptyList()
+        }
+            .firstNotNullOfOrNull { it.toHandle() }
+            ?: return null
+
+        tryFetchSeries(bound, title)
+    } catch (e: Exception) {
+        if (e is CancellationException) throw e
+        null
+    }
+
+    private fun normalizeTitle(value: String): String = value.lowercase()
+        .map { char -> if (char.isLetterOrDigit()) char else ' ' }
+        .joinToString("")
+        .split(' ')
+        .filter(String::isNotBlank)
+        .joinToString(" ")
+
+    // ============================ RouteId Cache ===========================
+    private fun routeIdCacheKey(handle: String): String {
+        val prefix = when {
+            isAniHandle(handle) -> "ani"
+            handle.startsWith("set-") -> "set"
+            else -> "raw"
+        }
+        return "route_id_cache_${prefix}_${cleanHandle(handle)}"
+    }
+
+    private fun cachedRouteId(handle: String?): String? = handle?.takeIf(String::isNotBlank)
+        ?.let { preferences.getString(routeIdCacheKey(it), null) }
+        ?.takeIf(String::isNotBlank)
+
+    private fun cacheRouteId(handle: String, routeId: String) {
+        if (handle.isBlank() || routeId.isBlank()) return
+        preferences.edit().putString(routeIdCacheKey(handle), routeId).apply()
+    }
+
+    // ========================== Episode Route Cache =======================
+    private fun episodeRouteIdCacheKey(handle: String, numStr: String): String = "episode_route_${cleanHandle(handle)}_$numStr"
+
+    private fun cachedEpisodeRouteId(handle: String, numStr: String): String? = preferences.getString(episodeRouteIdCacheKey(handle, numStr), null)
+        ?.takeIf { it.isNotBlank() }
+
+    private fun cacheEpisodeRouteId(handle: String, numStr: String, episodeRouteId: String) {
+        if (handle.isBlank() || numStr.isBlank() || episodeRouteId.isBlank()) return
+        preferences.edit().putString(episodeRouteIdCacheKey(handle, numStr), episodeRouteId).apply()
+    }
+
+    // ============================ Handle cache ============================
+
+    /**
+     * The stored handle (not the site URL) is the identity the app keeps
+     * for the entry, so it doubles as the cache key across refreshes.
+     */
+    private fun handleCacheKey(handle: String): String {
+        val prefix = when {
+            isAniHandle(handle) -> "ani"
+            handle.startsWith("set-") -> "set"
+            else -> "raw"
+        }
+        return "handle_cache_${prefix}_${cleanHandle(handle)}"
+    }
+
+    private fun cachedHandle(handle: String?): String? = handle?.takeIf(String::isNotBlank)
+        ?.let { preferences.getString(handleCacheKey(it), null) }
+        ?.takeIf(String::isNotBlank)
+
+    private fun cacheHandle(oldHandle: String, newHandle: String) {
+        if (handleCacheKey(newHandle) == handleCacheKey(oldHandle)) return
+        preferences.edit().putString(handleCacheKey(oldHandle), newHandle).apply()
+    }
+
+    private suspend fun fetchBootstrap(provider: String, id: String, epNum: String, lang: String): BootstrapDto {
+        val bootLang = if (lang.startsWith("dub")) "dub" else "sub"
+        val res = client.get(
+            "$apiUrl/anime/playback-bootstrap/$provider/$id?ep=$epNum&lang=$bootLang",
+            apiHeaders(),
+        )
+        return res.use { it.parseAs<BootstrapDto>() }
     }
 
     private suspend fun fetchFillerSet(anilistId: Long?, title: String?): Set<Double> = try {

@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
+import keiyoushi.annotation.Source
 import keiyoushi.utils.useAsJsoup
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -13,12 +14,8 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class AnimePlayer :
-    DooPlay(
-        "pt-BR",
-        "AnimePlayer",
-        "https://animeplayer.com.br",
-    ) {
+@Source
+abstract class AnimePlayer : DooPlay() {
 
     // ============================== Popular ===============================
     override fun popularAnimeSelector() = "div#archive-content article div.poster"
@@ -101,7 +98,7 @@ class AnimePlayer :
     private suspend fun getVideosFromURL(url: String, quality: String): List<Video> = when {
         "cdn.animeson.com.br" in url -> {
             listOf(
-                Video(url, quality, url, headers),
+                Video(videoUrl = url, videoTitle = quality, headers = headers),
             )
         }
 
