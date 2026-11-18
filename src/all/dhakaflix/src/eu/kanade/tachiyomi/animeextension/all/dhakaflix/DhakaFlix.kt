@@ -54,8 +54,6 @@ abstract class DhakaFlix :
         } ?: 0L
     }
 
-    private fun String.natKey() = lowercase().replace(Regex("\\d+")) { it.value.padStart(6, '0') }
-
     private fun parseEntries(response: Response): List<Entry> = parseEntries(response.asJsoup(), response.request.url)
 
     // Returns only direct children of the current folder (skips parent/sort links).
@@ -96,33 +94,6 @@ abstract class DhakaFlix :
         val ranges = fetchEntries((baseUrl + rootPath).toHttpUrl()).filter { it.isDir }
         return ranges.flatMap { r -> fetchEntries(r.url).filter { it.isDir } }
             .distinctBy { it.relPath }
-    }
-
-    // Strips/normalizes characters that some clients mis-handle when saving titles to their
-    // own storage: accented letters -> plain letters, curly quotes/dashes -> plain ASCII ones.
-    private fun sanitize(s: String): String {
-        val plain = Normalizer.normalize(s, Normalizer.Form.NFKD).replace(Regex("\\p{M}"), "")
-        return plain
-            .replace("\\", "")
-            .replace(Regex("[\u2010-\u2015]"), "-")
-            .replace(Regex("[\u2018\u2019]"), "'")
-            .replace(Regex("[\u201C\u201D]"), "\"")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-    }
-
-    private val techCutoff = Regex(
-        """\b(1080p|720p|480p|2160p|4k|x264|x265|hevc|bd|bluray|web-?dl|hdtv|dvdrip|(multi|dual)[ _-]?audio|10bit|8bit|dd\d\.\d|esub|uncut|remux)\b""",
-        RegexOption.IGNORE_CASE,
-    )
-
-    // Keeps only the show/episode identifier: drops the release-group tag and every
-    // quality/codec tag after it, and never includes the season folder name.
-    private fun cleanEpisodeName(raw: String): String {
-        val noGroupTag = raw.replace(Regex("""^\s*\[[^\]]*\]\s*"""), "")
-        val cutIndex = techCutoff.find(noGroupTag)?.range?.first
-        val core = if (cutIndex != null) noGroupTag.substring(0, cutIndex) else noGroupTag
-        return sanitize(core.replace(Regex("[\\[\\]]"), "").trimEnd(' ', '-', '_', '.', '(', '{'))
     }
 
     private fun toAnime(e: Entry) = SAnime.create().apply {
@@ -219,6 +190,112 @@ abstract class DhakaFlix :
         status = SAnime.UNKNOWN
     }
 
+    // region naming
+    private fun String.natKey() = lowercase().replace(Regex("\\d+")) { it.value.padStart(6, '0') }
+
+    // Strips/normalizes characters that some clients mis-handle when saving titles to their
+    // own storage: accented letters -> plain letters, curly quotes/dashes -> plain ASCII ones.
+    private fun sanitize(s: String): String {
+        val plain = Normalizer.normalize(s, Normalizer.Form.NFKD).replace(Regex("\\p{M}"), "")
+        return plain
+            .replace("\\", "")
+            .replace(Regex("[\u2010-\u2015]"), "-")
+            .replace(Regex("[\u2018\u2019]"), "'")
+            .replace(Regex("[\u201C\u201D]"), "\"")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private val techCutoff = Regex(
+        """\b(1080p|720p|480p|2160p|4k|x264|x265|hevc|bd|bluray|web-?dl|hdtv|dvdrip|(multi|dual)[ _-]?audio|10bit|8bit|dd\d\.\d|esub|uncut|remux)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    // Keeps only the show/episode identifier: drops the release-group tag and every
+    // quality/codec tag after it, and never includes the season folder name.
+    private fun cleanEpisodeName(raw: String): String {
+        val noGroupTag = raw.replace(Regex("""^\s*\[[^\]]*\]\s*"""), "")
+        val cutIndex = techCutoff.find(noGroupTag)?.range?.first
+        val core = if (cutIndex != null) noGroupTag.substring(0, cutIndex) else noGroupTag
+        return sanitize(core.replace(Regex("[\\[\\]]"), "").trimEnd(' ', '-', '_', '.', '(', '{'))
+    }
+
+    private fun pad2(n: Int) = n.toString().padStart(2, '0')
+
+    private class ParsedName(val show: String, val season: Int?, val number: Int?, val isSeasonEpisode: Boolean)
+
+    private val seRegex = Regex("""(?i)^(.*?)[\s._-]*\bS(\d{1,2})[\s._-]*E(\d{1,4})\b""")
+    private val epRegex = Regex("""(?i)^(.*?)[\s._-]*\b(?:E|EP|Episode)[\s._-]*(\d{1,4})\b""")
+    private val dashRegex = Regex("""^(.*?)[\s._]*-[\s._]*(\d{1,4})(?:v\d)?\b""")
+    private val tailRegex = Regex("""^(.*?)[\s._]+(\d{1,4})\s*$""")
+    private val seasonFolderRegex = Regex("""(?i)\bseason\s*0*(\d+)""")
+    private val rangeRegex = Regex("""\(\s*0*(\d+)\s*[-\u2013\u2014]\s*0*(\d+)\s*\)""")
+
+    // "Naruto Shippuden - 001" / "Naruto E001" / "Naruto-S16E13" -> show name + season + number
+    private fun parseName(clean: String): ParsedName {
+        seRegex.find(clean)?.let {
+            return ParsedName(it.groupValues[1].trim(), it.groupValues[2].toInt(), it.groupValues[3].toInt(), true)
+        }
+        for (r in listOf(epRegex, dashRegex, tailRegex)) {
+            r.find(clean)?.let {
+                return ParsedName(it.groupValues[1].trim(), null, it.groupValues[2].toInt(), false)
+            }
+        }
+        return ParsedName("", null, null, false)
+    }
+
+    // "Season 19 Ep (394-413)" -> 19
+    private fun seasonOfFolder(folder: String): Int? = seasonFolderRegex.find(folder)?.groupValues?.get(1)?.toIntOrNull()
+
+    // "Season 19 Ep (394-413)" -> 394 (first absolute episode number covered by the folder)
+    private fun rangeStartOfFolder(folder: String): Int? {
+        val m = rangeRegex.find(folder) ?: return null
+        val start = m.groupValues[1].toIntOrNull() ?: return null
+        val end = m.groupValues[2].toIntOrNull() ?: return null
+        return if (end >= start && start < 1900) start else null
+    }
+
+    // "Naruto-Shippuden (TV Cartoon 2007-2017) 1080p [Multi Audio]" -> "Naruto-Shippuden"
+    private fun showFromFolder(name: String) = sanitize(name).replace(Regex("""\s*[\[(].*?[\])]\s*"""), " ").trim()
+
+    private class EpFile(
+        val folder: String,
+        val season: Int?,
+        val fileName: String,
+        val relPath: String,
+        val clean: String,
+        val parsed: ParsedName,
+    )
+
+    // Chronological order: seasons ascending (each sorted by episode number), then everything without a season.
+    // Seasonal titles look like "Show - S19E01 - 394" so AniZen can group them into season tabs.
+    private fun orderedTitles(files: List<EpFile>, fallbackShow: String): List<Pair<EpFile, String>> {
+        val show = files.map { it.parsed.show }.filter { it.isNotBlank() }
+            .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: fallbackShow
+
+        val result = mutableListOf<Pair<EpFile, String>>()
+        var running = 0
+
+        val blocks = files.filter { it.season != null }
+            .groupBy { it.folder to (it.season ?: 0) }
+            .entries.sortedBy { it.key.second }
+        for ((key, block) in blocks) {
+            val start = rangeStartOfFolder(key.first)
+            val sorted = block.sortedWith(compareBy({ it.parsed.number ?: Int.MAX_VALUE }, { it.fileName.natKey() }))
+            sorted.forEachIndexed { idx, f ->
+                running++
+                val inSeason = if (f.parsed.isSeasonEpisode) f.parsed.number ?: (idx + 1) else idx + 1
+                val absolute = if (start != null) start + idx else running
+                result.add(f to "$show - S${pad2(key.second)}E${pad2(inSeason)} - $absolute")
+            }
+        }
+        for (f in files.filter { it.season == null }) {
+            result.add(f to f.clean)
+        }
+        return result
+    }
+    // endregion
+
     // ---------- Episodes (video files, including inside season sub-folders) ----------
 
     private fun collect(
@@ -242,10 +319,19 @@ abstract class DhakaFlix :
     override fun episodeListParse(response: Response): List<SEpisode> {
         val files = mutableListOf<Pair<String, Entry>>()
         collect(parseEntries(response), "", 1, files)
-        return files.mapIndexed { i, (_, e) ->
+
+        val epFiles = files.map { (prefix, e) ->
+            val folder = prefix.substringBefore(" / ")
+            val clean = cleanEpisodeName(e.name.substringBeforeLast('.'))
+            val parsed = parseName(clean)
+            EpFile(folder, seasonOfFolder(folder) ?: parsed.season, e.name, e.relPath, clean, parsed)
+        }
+        val animeFolder = response.request.url.pathSegments.lastOrNull { it.isNotEmpty() }.orEmpty()
+
+        return orderedTitles(epFiles, showFromFolder(animeFolder)).mapIndexed { i, (f, title) ->
             SEpisode.create().apply {
-                url = e.relPath
-                name = cleanEpisodeName(e.name.substringBeforeLast('.'))
+                url = f.relPath
+                name = title
                 episode_number = (i + 1).toFloat()
             }
         }.reversed()
